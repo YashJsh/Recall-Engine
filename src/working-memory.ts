@@ -110,7 +110,7 @@ export class RedisWorkingMemory {
   private readonly keyPrefix: string;
 
   constructor(
-    private readonly redis: RedisClientType,
+    private readonly redis: RedisClientType<any, any, any, any>,
     private readonly options: WorkingMemoryOptions,
   ) {
     if (!Number.isInteger(options.tokenBudget) || options.tokenBudget < 1) {
