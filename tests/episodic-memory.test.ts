@@ -8,6 +8,12 @@ import {
   type ConversationScope,
 } from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
+import {
+  ConversationSummaryService,
+  SummaryInputTooLargeError,
+  type SummaryGenerationInput,
+  type SummaryGenerator,
+} from "../src/summary-service.js";
 
 const prisma = createPostgresClient();
 const memory = new EpisodicMemory(prisma);
@@ -119,6 +125,84 @@ describe("EpisodicMemory", () => {
         SummaryCheckpointError,
       );
       assert.equal((await memory.getLatestSummary(owner.scope, conversation.id))?.id, second.id);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("summarizes only new messages and carries the previous summary forward", async () => {
+    const owner = await createOwner();
+    try {
+      const conversation = await memory.createConversation(owner.scope);
+      const generatedInputs: SummaryGenerationInput[] = [];
+      const generator: SummaryGenerator = {
+        async generate(input) {
+          generatedInputs.push(input);
+          return `summary-${generatedInputs.length}`;
+        },
+      };
+      const summaries = new ConversationSummaryService(memory, generator);
+
+      for (const content of ["message 1", "message 2"]) {
+        await memory.appendMessage(owner.scope, conversation.id, {
+          role: MessageRole.user,
+          content,
+        });
+      }
+      const first = await summaries.summarizeThrough(owner.scope, conversation.id, 2);
+
+      for (const content of ["message 3", "message 4"]) {
+        await memory.appendMessage(owner.scope, conversation.id, {
+          role: MessageRole.assistant,
+          content,
+        });
+      }
+      const second = await summaries.summarizeThrough(owner.scope, conversation.id, 4);
+
+      assert.equal(first.summaryText, "summary-1");
+      assert.equal(second.summaryText, "summary-2");
+      assert.equal(second.version, 2);
+      assert.deepEqual(generatedInputs[0].messages.map(({ sequenceNo }) => sequenceNo), [1, 2]);
+      assert.deepEqual(generatedInputs[1].messages.map(({ sequenceNo }) => sequenceNo), [3, 4]);
+      assert.equal(generatedInputs[1].previousSummary, "summary-1");
+      await assert.rejects(
+        summaries.summarizeThrough(owner.scope, conversation.id, 5),
+        SummaryCheckpointError,
+      );
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("does not call the generator when the selected message range is too large", async () => {
+    const owner = await createOwner();
+    try {
+      const conversation = await memory.createConversation(owner.scope);
+      await memory.appendMessage(owner.scope, conversation.id, {
+        role: MessageRole.user,
+        content: "message 1",
+      });
+      await memory.appendMessage(owner.scope, conversation.id, {
+        role: MessageRole.user,
+        content: "message 2",
+      });
+      let generatorCalled = false;
+      const generator: SummaryGenerator = {
+        async generate() {
+          generatorCalled = true;
+          return "should not be called";
+        },
+      };
+      const summaries = new ConversationSummaryService(memory, generator, {
+        maxMessagesPerSummary: 1,
+      });
+
+      await assert.rejects(
+        summaries.summarizeThrough(owner.scope, conversation.id, 2),
+        SummaryInputTooLargeError,
+      );
+      assert.equal(generatorCalled, false);
+      assert.equal(await memory.getLatestSummary(owner.scope, conversation.id), null);
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
     }

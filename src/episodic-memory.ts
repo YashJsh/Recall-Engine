@@ -14,6 +14,7 @@ export interface AppendMessageInput {
 
 export interface ListMessagesOptions {
   afterSequenceNo?: number;
+  throughSequenceNo?: number;
   limit?: number;
 }
 
@@ -89,14 +90,20 @@ export class EpisodicMemory {
       && (!Number.isInteger(options.afterSequenceNo) || options.afterSequenceNo < 0)) {
       throw new Error("afterSequenceNo must be a non-negative integer");
     }
+    if (options.throughSequenceNo !== undefined
+      && (!Number.isInteger(options.throughSequenceNo) || options.throughSequenceNo < 1)) {
+      throw new Error("throughSequenceNo must be a positive integer");
+    }
+
+    const sequenceNo: { gt?: number; lte?: number } = {};
+    if (options.afterSequenceNo !== undefined) sequenceNo.gt = options.afterSequenceNo;
+    if (options.throughSequenceNo !== undefined) sequenceNo.lte = options.throughSequenceNo;
 
     return this.prisma.conversationMessage.findMany({
       where: {
         tenantId: scope.tenantId,
         conversationId,
-        ...(options.afterSequenceNo === undefined
-          ? {}
-          : { sequenceNo: { gt: options.afterSequenceNo } }),
+        ...(Object.keys(sequenceNo).length > 0 ? { sequenceNo } : {}),
         conversation: {
           is: {
             tenantId: scope.tenantId,
