@@ -35,7 +35,7 @@ const MAX_ALLOWED_MESSAGES = 199;
 
 /** Selects the unsummarized message range, calls a provider, then saves a checkpoint. */
 export class ConversationSummaryService {
-  private readonly maxMessagesPerSummary: number;
+  readonly maxMessagesPerSummary: number;
 
   constructor(
     private readonly memory: EpisodicMemory,

@@ -9,6 +9,11 @@ import {
 } from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
 import {
+  ContextBudgetExceededError,
+  ConversationContextCompactor,
+  type ContextTokenCounter,
+} from "../src/context-compaction.js";
+import {
   ConversationSummaryService,
   SummaryInputTooLargeError,
   type SummaryGenerationInput,
@@ -202,6 +207,104 @@ describe("EpisodicMemory", () => {
         SummaryInputTooLargeError,
       );
       assert.equal(generatorCalled, false);
+      assert.equal(await memory.getLatestSummary(owner.scope, conversation.id), null);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("compacts older messages and keeps the newest message in the bounded prompt", async () => {
+    const owner = await createOwner();
+    try {
+      const conversation = await memory.createConversation(owner.scope);
+      const generatedInputs: SummaryGenerationInput[] = [];
+      const generator: SummaryGenerator = {
+        async generate(input) {
+          generatedInputs.push(input);
+          return "The user discussed project goals and chose concise updates.";
+        },
+      };
+      const summaries = new ConversationSummaryService(memory, generator);
+      const tokenCounter: ContextTokenCounter = {
+        count(messages) {
+          return messages.reduce(
+            (total, message) => total + message.content.split(/\s+/).filter(Boolean).length + 4,
+            0,
+          );
+        },
+      };
+      const compactor = new ConversationContextCompactor(memory, summaries, {
+        inputTokenBudget: 90,
+        triggerRatio: 0.8,
+        targetRatio: 0.7,
+        summaryTokenReserve: 5,
+      }, tokenCounter);
+
+      for (let index = 1; index <= 8; index += 1) {
+        await memory.appendMessage(owner.scope, conversation.id, {
+          role: MessageRole.user,
+          content: `Historic message ${index} includes details about project goals and decisions`,
+        });
+      }
+
+      const context = await compactor.build(
+        owner.scope,
+        conversation.id,
+        "Help the user with the project.",
+      );
+      const storedMessages = await memory.listMessages(owner.scope, conversation.id, { limit: 20 });
+
+      assert.equal(context.compactionPerformed, true);
+      assert.equal(context.targetReached, true);
+      assert.ok(context.tokenCount <= 90);
+      assert.equal(context.summaryThroughSequenceNo, 7);
+      assert.deepEqual(generatedInputs[0].messages.map(({ sequenceNo }) => sequenceNo), [1, 2, 3, 4, 5, 6, 7]);
+      assert.equal(context.messages.at(-1)?.content, "Historic message 8 includes details about project goals and decisions");
+      assert.equal(context.messages[0].content.includes("The user discussed project goals"), true);
+      assert.equal(storedMessages.length, 8);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("leaves messages untouched and fails safely when even the newest message cannot fit", async () => {
+    const owner = await createOwner();
+    try {
+      const conversation = await memory.createConversation(owner.scope);
+      const oversizedContent = Array.from({ length: 100 }, (_, index) => `detail${index}`).join(" ");
+      await memory.appendMessage(owner.scope, conversation.id, {
+        role: MessageRole.user,
+        content: oversizedContent,
+      });
+      let generatorCalled = false;
+      const generator: SummaryGenerator = {
+        async generate() {
+          generatorCalled = true;
+          return "should not run";
+        },
+      };
+      const summaries = new ConversationSummaryService(memory, generator);
+      const tokenCounter: ContextTokenCounter = {
+        count(messages) {
+          return messages.reduce(
+            (total, message) => total + message.content.split(/\s+/).filter(Boolean).length + 4,
+            0,
+          );
+        },
+      };
+      const compactor = new ConversationContextCompactor(memory, summaries, {
+        inputTokenBudget: 40,
+        triggerRatio: 0.8,
+        targetRatio: 0.6,
+        summaryTokenReserve: 5,
+      }, tokenCounter);
+
+      await assert.rejects(
+        compactor.build(owner.scope, conversation.id, "Do the task."),
+        ContextBudgetExceededError,
+      );
+      assert.equal(generatorCalled, false);
+      assert.equal((await memory.listMessages(owner.scope, conversation.id)).length, 1);
       assert.equal(await memory.getLatestSummary(owner.scope, conversation.id), null);
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
