@@ -17,6 +17,18 @@ export interface ListMessagesOptions {
   limit?: number;
 }
 
+export interface SaveSummaryInput {
+  summaryText: string;
+  throughSequenceNo: number;
+}
+
+export class SummaryCheckpointError extends Error {
+  constructor() {
+    super("The conversation summary checkpoint is stale or beyond the available messages");
+    this.name = "SummaryCheckpointError";
+  }
+}
+
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
@@ -95,6 +107,87 @@ export class EpisodicMemory {
       },
       orderBy: { sequenceNo: "asc" },
       take: limit,
+    });
+  }
+
+  saveSummary(
+    scope: ConversationScope,
+    conversationId: string,
+    input: SaveSummaryInput,
+  ) {
+    this.validateScope(scope);
+    if (!input.summaryText.trim()) throw new Error("summaryText must not be empty");
+    if (!Number.isInteger(input.throughSequenceNo) || input.throughSequenceNo < 1) {
+      throw new Error("throughSequenceNo must be a positive integer");
+    }
+
+    return this.prisma.$transaction(async (transaction) => {
+      const advanced = await transaction.conversation.updateMany({
+        where: {
+          tenantId: scope.tenantId,
+          id: conversationId,
+          userId: scope.userId,
+          sessionId: scope.sessionId,
+          nextSequenceNo: { gte: input.throughSequenceNo },
+          summaryThroughSequenceNo: { lt: input.throughSequenceNo },
+        },
+        data: {
+          summaryThroughSequenceNo: input.throughSequenceNo,
+          nextSummaryVersion: { increment: 1 },
+        },
+      });
+      if (advanced.count !== 1) throw new SummaryCheckpointError();
+
+      const conversation = await transaction.conversation.findUniqueOrThrow({
+        where: { tenantId_id: { tenantId: scope.tenantId, id: conversationId } },
+        select: { nextSummaryVersion: true },
+      });
+
+      return transaction.conversationSummary.create({
+        data: {
+          tenantId: scope.tenantId,
+          conversationId,
+          version: conversation.nextSummaryVersion,
+          summaryText: input.summaryText,
+          throughSequenceNo: input.throughSequenceNo,
+        },
+      });
+    });
+  }
+
+  getLatestSummary(scope: ConversationScope, conversationId: string) {
+    this.validateScope(scope);
+    return this.prisma.conversationSummary.findFirst({
+      where: {
+        tenantId: scope.tenantId,
+        conversationId,
+        conversation: {
+          is: {
+            tenantId: scope.tenantId,
+            userId: scope.userId,
+            sessionId: scope.sessionId,
+          },
+        },
+      },
+      orderBy: { version: "desc" },
+    });
+  }
+
+  listSummaryVersions(scope: ConversationScope, conversationId: string) {
+    this.validateScope(scope);
+    return this.prisma.conversationSummary.findMany({
+      where: {
+        tenantId: scope.tenantId,
+        conversationId,
+        conversation: {
+          is: {
+            tenantId: scope.tenantId,
+            userId: scope.userId,
+            sessionId: scope.sessionId,
+          },
+        },
+      },
+      orderBy: { version: "asc" },
     });
   }
 

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
 import { MessageRole } from "../src/generated/prisma/enums.js";
-import { EpisodicMemory, type ConversationScope } from "../src/episodic-memory.js";
+import {
+  EpisodicMemory,
+  SummaryCheckpointError,
+  type ConversationScope,
+} from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
 
 const prisma = createPostgresClient();
@@ -61,6 +65,60 @@ describe("EpisodicMemory", () => {
         [...contents].sort(),
       );
       assert.deepEqual(await memory.listMessages(otherUserScope, conversation.id), []);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("stores versioned summaries with message checkpoints and rejects stale checkpoints", async () => {
+    const owner = await createOwner();
+    try {
+      const conversation = await memory.createConversation(owner.scope);
+      await memory.appendMessage(owner.scope, conversation.id, {
+        role: MessageRole.user,
+        content: "I prefer concise updates.",
+      });
+      await memory.appendMessage(owner.scope, conversation.id, {
+        role: MessageRole.assistant,
+        content: "I will keep updates concise.",
+      });
+
+      const first = await memory.saveSummary(owner.scope, conversation.id, {
+        summaryText: "The user prefers concise updates.",
+        throughSequenceNo: 1,
+      });
+      const second = await memory.saveSummary(owner.scope, conversation.id, {
+        summaryText: "The user prefers concise updates; the assistant agreed.",
+        throughSequenceNo: 2,
+      });
+
+      assert.equal(first.version, 1);
+      assert.equal(second.version, 2);
+      assert.equal(second.throughSequenceNo, 2);
+      assert.equal((await memory.getLatestSummary(owner.scope, conversation.id))?.id, second.id);
+      assert.equal(
+        await memory.getLatestSummary({ ...owner.scope, userId: randomUUID() }, conversation.id),
+        null,
+      );
+      assert.deepEqual(
+        (await memory.listSummaryVersions(owner.scope, conversation.id)).map(({ version }) => version),
+        [1, 2],
+      );
+      await assert.rejects(
+        memory.saveSummary(owner.scope, conversation.id, {
+          summaryText: "Out of date summary.",
+          throughSequenceNo: 1,
+        }),
+        SummaryCheckpointError,
+      );
+      await assert.rejects(
+        memory.saveSummary(owner.scope, conversation.id, {
+          summaryText: "A summary of messages that do not exist.",
+          throughSequenceNo: 3,
+        }),
+        SummaryCheckpointError,
+      );
+      assert.equal((await memory.getLatestSummary(owner.scope, conversation.id))?.id, second.id);
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
     }

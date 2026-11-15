@@ -49,16 +49,19 @@ model Session {
 }
 
 model Conversation {
-  id             String                @default(uuid()) @db.Uuid
-  tenantId       String                @db.Uuid
-  userId         String                @db.Uuid
-  sessionId      String                @db.Uuid
-  title          String?
-  nextSequenceNo Int                   @default(0)
-  startedAt      DateTime              @default(now()) @db.Timestamptz(6)
-  endedAt        DateTime?             @db.Timestamptz(6)
-  session        Session               @relation(fields: [tenantId, userId, sessionId], references: [tenantId, userId, id], onDelete: Cascade)
-  messages       ConversationMessage[]
+  id                       String                @default(uuid()) @db.Uuid
+  tenantId                 String                @db.Uuid
+  userId                   String                @db.Uuid
+  sessionId                String                @db.Uuid
+  title                    String?
+  nextSequenceNo           Int                   @default(0)
+  nextSummaryVersion       Int                   @default(0)
+  summaryThroughSequenceNo Int                   @default(0)
+  startedAt                DateTime              @default(now()) @db.Timestamptz(6)
+  endedAt                  DateTime?             @db.Timestamptz(6)
+  session                  Session               @relation(fields: [tenantId, userId, sessionId], references: [tenantId, userId, id], onDelete: Cascade)
+  messages                 ConversationMessage[]
+  summaries                ConversationSummary[]
 
   @@id([tenantId, id])
   @@index([tenantId, userId, startedAt])
@@ -76,4 +79,18 @@ model ConversationMessage {
   conversation   Conversation @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
 
   @@unique([tenantId, conversationId, sequenceNo])
+}
+
+model ConversationSummary {
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String       @db.Uuid
+  conversationId    String       @db.Uuid
+  version           Int
+  summaryText       String       @db.Text
+  throughSequenceNo Int
+  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
+  conversation      Conversation @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, conversationId, version])
+  @@index([tenantId, conversationId, throughSequenceNo])
 }

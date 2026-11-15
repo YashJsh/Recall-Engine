@@ -5,7 +5,7 @@ Recall Engine is being built incrementally as reusable memory infrastructure for
 ## Current slices
 
 - Redis-backed working memory with token budgets, priority eviction, protected items, and session TTL.
-- PostgreSQL episodic memory for tenant-scoped sessions, conversations, and exact message history.
+- PostgreSQL episodic memory for tenant-scoped sessions, conversations, exact message history, and versioned summaries.
 
 ## Local PostgreSQL
 
@@ -23,6 +23,8 @@ PostgreSQL data is kept in a Docker volume. Stop the container with `npm run db:
 ## Episodic memory
 
 `EpisodicMemory` creates conversations, appends messages in a transaction, and retrieves exact messages in sequence-number order. Message sequence numbers are allocated by incrementing a counter on the conversation row inside the same transaction as the insert. This keeps concurrent appends ordered and avoids gaps when an insert rolls back.
+
+`saveSummary` stores supplied summary text as a versioned checkpoint through a message sequence number. Earlier versions are retained. Summary generation and the trigger for refreshing a summary are not implemented yet; the active-context compaction policy will decide when to create one, and a local model can be connected later.
 
 Run the PostgreSQL integration test with:
 
