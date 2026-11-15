@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
 import { createClient } from "redis";
-import { RedisWorkingMemory, type WorkingMemoryScope } from "./working-memory.js";
+import { RedisWorkingMemory, type WorkingMemoryScope } from "../src/working-memory.js";
 
 const redis = createClient({
   url: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",

@@ -1,5 +1,5 @@
-import { RedisWorkingMemory } from "./working-memory.js";
-import { connectRedis } from "./redis-client.js";
+import { RedisWorkingMemory } from "../src/working-memory.js";
+import { connectRedis } from "../src/redis-client.js";
 
 const scope = {
   tenantId: "local-demo-tenant",

@@ -6,8 +6,8 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "test": "npm run build && node --test dist/working-memory.test.js",
-    "demo": "npm run build && node dist/demo.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/working-memory.test.js",
+    "demo": "tsc -p tsconfig.demo.json && node dist-demo/examples/working-memory-demo.js"
   },
   "dependencies": {
     "redis": "^5.0.0"
