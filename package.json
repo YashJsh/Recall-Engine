@@ -7,13 +7,24 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/working-memory.test.js",
+    "test:episodic": "tsc -p tsconfig.episodic-test.json && node --test dist-episodic-test/tests/episodic-memory.test.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose stop postgres",
     "demo": "tsc -p tsconfig.demo.json && node dist-demo/examples/working-memory-demo.js"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "dotenv": "^18.0.10",
+    "pg": "^8.23.1",
     "redis": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "prisma": "^7.10.1",
     "typescript": "^5.0.0"
   }
 }

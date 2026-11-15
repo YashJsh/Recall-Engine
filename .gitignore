@@ -1,7 +1,9 @@
 node_modules/
 dist/
 dist-test/
+dist-episodic-test/
 dist-demo/
+src/generated/prisma/
 .env
 .env.*
 !.env.example

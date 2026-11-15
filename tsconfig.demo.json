@@ -5,5 +5,9 @@
     "outDir": "dist-demo",
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts"]
+  "include": [
+    "src/working-memory.ts",
+    "src/redis-client.ts",
+    "examples/working-memory-demo.ts"
+  ]
 }

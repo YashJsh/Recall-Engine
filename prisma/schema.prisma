@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MessageRole {
+  system
+  user
+  assistant
+  tool
+}
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  users     User[]
+}
+
+model User {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid
+  externalId String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions   Session[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, externalId])
+}
+
+model Session {
+  id            String         @default(uuid()) @db.Uuid
+  tenantId      String         @db.Uuid
+  userId        String         @db.Uuid
+  externalId    String?
+  expiresAt     DateTime?      @db.Timestamptz(6)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  user          User           @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@id([tenantId, userId, id])
+  @@unique([tenantId, userId, externalId])
+  @@index([tenantId, userId, expiresAt])
+}
+
+model Conversation {
+  id             String                @default(uuid()) @db.Uuid
+  tenantId       String                @db.Uuid
+  userId         String                @db.Uuid
+  sessionId      String                @db.Uuid
+  title          String?
+  nextSequenceNo Int                   @default(0)
+  startedAt      DateTime              @default(now()) @db.Timestamptz(6)
+  endedAt        DateTime?             @db.Timestamptz(6)
+  session        Session               @relation(fields: [tenantId, userId, sessionId], references: [tenantId, userId, id], onDelete: Cascade)
+  messages       ConversationMessage[]
+
+  @@id([tenantId, id])
+  @@index([tenantId, userId, startedAt])
+  @@index([tenantId, sessionId, startedAt])
+}
+
+model ConversationMessage {
+  id             String       @id @default(uuid()) @db.Uuid
+  tenantId       String       @db.Uuid
+  conversationId String       @db.Uuid
+  sequenceNo     Int
+  role           MessageRole
+  content        String       @db.Text
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  conversation   Conversation @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, conversationId, sequenceNo])
+}
