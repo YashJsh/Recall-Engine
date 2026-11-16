@@ -99,6 +99,23 @@ describe("SemanticMemoryStore", () => {
     }
   });
 
+  it("rejects a malformed source message ID", async () => {
+    const owner = await createOwner();
+    try {
+      await assert.rejects(
+        semanticMemory.create(owner.scope, {
+          content: "The user prefers Redis for working memory.",
+          category: SemanticMemoryCategory.preference,
+          sourceConversationId: owner.conversationId,
+          sourceMessageId: "not-a-uuid",
+        }),
+        SemanticMemorySourceError,
+      );
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
   it("rejects a source message owned by another user", async () => {
     const owner = await createOwner();
     try {
@@ -152,6 +169,7 @@ describe("SemanticMemoryStore", () => {
 
       assert.equal(await semanticMemory.getById(otherUser.scope, fact.id), null);
       assert.equal(await semanticMemory.getById(otherTenant.scope, fact.id), null);
+      assert.equal(await semanticMemory.getById(owner.scope, "not-a-uuid"), null);
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
       await prisma.tenant.delete({ where: { id: otherTenant.tenantId } });
@@ -219,6 +237,7 @@ describe("SemanticMemoryStore", () => {
       });
 
       await assert.rejects(createSupersedingFact(randomUUID()), SemanticMemorySupersessionError);
+      await assert.rejects(createSupersedingFact("not-a-uuid"), SemanticMemorySupersessionError);
       await assert.rejects(createSupersedingFact(foreignFact.id), SemanticMemorySupersessionError);
       await assert.rejects(createSupersedingFact(previous.id), SemanticMemorySupersessionError);
     } finally {

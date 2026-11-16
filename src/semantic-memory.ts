@@ -7,6 +7,7 @@ import {
 const semanticMemoryInclude = {
   sourceMessage: { include: { conversation: true } },
 } satisfies Prisma.SemanticMemoryInclude;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type SemanticMemoryScope = {
   tenantId: string;
@@ -49,8 +50,12 @@ export class SemanticMemoryStore {
   ): Promise<SemanticMemoryRecord> {
     this.validateScope(scope);
     if (!input.content.trim()) throw new Error("content must not be empty");
-    if (!input.sourceConversationId.trim()) throw new Error("sourceConversationId must not be empty");
-    if (!input.sourceMessageId.trim()) throw new Error("sourceMessageId must not be empty");
+    if (!UUID_PATTERN.test(input.sourceConversationId) || !UUID_PATTERN.test(input.sourceMessageId)) {
+      throw new SemanticMemorySourceError();
+    }
+    if (input.supersedesMemoryId !== undefined && !UUID_PATTERN.test(input.supersedesMemoryId)) {
+      throw new SemanticMemorySupersessionError();
+    }
 
     return this.prisma.$transaction(async (transaction) => {
       const source = await transaction.conversationMessage.findFirst({
@@ -99,7 +104,7 @@ export class SemanticMemoryStore {
     memoryId: string,
   ): Promise<SemanticMemoryRecord | null> {
     this.validateScope(scope);
-    if (!memoryId.trim()) throw new Error("memoryId must not be empty");
+    if (!UUID_PATTERN.test(memoryId)) return Promise.resolve(null);
 
     return this.prisma.semanticMemory.findFirst({
       where: { id: memoryId, tenantId: scope.tenantId, userId: scope.userId },
@@ -108,7 +113,7 @@ export class SemanticMemoryStore {
   }
 
   private validateScope(scope: SemanticMemoryScope): void {
-    if (!scope.tenantId.trim()) throw new Error("tenantId must not be empty");
-    if (!scope.userId.trim()) throw new Error("userId must not be empty");
+    if (!UUID_PATTERN.test(scope.tenantId)) throw new Error("tenantId must be a UUID");
+    if (!UUID_PATTERN.test(scope.userId)) throw new Error("userId must be a UUID");
   }
 }
