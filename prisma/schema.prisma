@@ -14,6 +14,17 @@ enum MessageRole {
   tool
 }
 
+enum SemanticMemoryCategory {
+  preference
+  profile
+  project_fact
+}
+
+enum SemanticMemoryStatus {
+  active
+  superseded
+}
+
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -22,12 +33,13 @@ model Tenant {
 }
 
 model User {
-  id         String    @id @default(uuid()) @db.Uuid
-  tenantId   String    @db.Uuid
-  externalId String
-  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
-  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  sessions   Session[]
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  externalId       String
+  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions         Session[]
+  semanticMemories SemanticMemory[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalId])
@@ -62,23 +74,27 @@ model Conversation {
   session                  Session               @relation(fields: [tenantId, userId, sessionId], references: [tenantId, userId, id], onDelete: Cascade)
   messages                 ConversationMessage[]
   summaries                ConversationSummary[]
+  semanticMemories         SemanticMemory[]      @relation("SemanticMemoryConversation")
 
   @@id([tenantId, id])
+  @@unique([tenantId, userId, id])
   @@index([tenantId, userId, startedAt])
   @@index([tenantId, sessionId, startedAt])
 }
 
 model ConversationMessage {
-  id             String       @id @default(uuid()) @db.Uuid
-  tenantId       String       @db.Uuid
-  conversationId String       @db.Uuid
-  sequenceNo     Int
-  role           MessageRole
-  content        String       @db.Text
-  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
-  conversation   Conversation @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  conversationId   String           @db.Uuid
+  sequenceNo       Int
+  role             MessageRole
+  content          String           @db.Text
+  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+  conversation     Conversation     @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
+  semanticMemories SemanticMemory[] @relation("SemanticMemorySourceMessage")
 
   @@unique([tenantId, conversationId, sequenceNo])
+  @@unique([tenantId, conversationId, id])
 }
 
 model ConversationSummary {
@@ -93,4 +109,25 @@ model ConversationSummary {
 
   @@unique([tenantId, conversationId, version])
   @@index([tenantId, conversationId, throughSequenceNo])
+}
+
+model SemanticMemory {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  tenantId             String                 @db.Uuid
+  userId               String                 @db.Uuid
+  content              String                 @db.Text
+  category             SemanticMemoryCategory
+  status               SemanticMemoryStatus   @default(active)
+  sourceConversationId String                 @db.Uuid
+  sourceMessageId      String                 @db.Uuid
+  supersedesMemoryId   String?                @db.Uuid
+  createdAt            DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @db.Timestamptz(6)
+  user                 User                   @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  sourceConversation   Conversation           @relation("SemanticMemoryConversation", fields: [tenantId, userId, sourceConversationId], references: [tenantId, userId, id], onDelete: Cascade)
+  sourceMessage        ConversationMessage    @relation("SemanticMemorySourceMessage", fields: [tenantId, sourceConversationId, sourceMessageId], references: [tenantId, conversationId, id], onDelete: Cascade)
+
+  @@index([tenantId, userId, status, createdAt])
+  @@index([tenantId, sourceConversationId, sourceMessageId])
+  @@index([tenantId, userId, supersedesMemoryId])
 }

@@ -7,7 +7,9 @@
   },
   "include": [
     "src/episodic-memory.ts",
+    "src/semantic-memory.ts",
     "src/postgres-client.ts",
-    "tests/episodic-memory.test.ts"
+    "tests/episodic-memory.test.ts",
+    "tests/semantic-memory.test.ts"
   ]
 }

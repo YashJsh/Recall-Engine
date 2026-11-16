@@ -7,7 +7,7 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/working-memory.test.js",
-    "test:episodic": "tsc -p tsconfig.episodic-test.json && node --test dist-episodic-test/tests/episodic-memory.test.js",
+    "test:episodic": "tsc -p tsconfig.episodic-test.json && node --test dist-episodic-test/tests/episodic-memory.test.js dist-episodic-test/tests/semantic-memory.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:up": "docker compose up -d postgres",

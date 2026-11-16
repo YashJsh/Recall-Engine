@@ -36,6 +36,12 @@ Run the PostgreSQL integration test with:
 npm run test:episodic
 ```
 
+## Semantic memory
+
+`SemanticMemoryStore` saves one durable fact per record in PostgreSQL. Each record has a stable semantic-memory ID, tenant/user ownership, a category, and references to the source conversation and exact message. Fetching by ID returns the stored fact together with its source message, scoped to the owning tenant and user. Superseding a fact creates a new record and retains the prior one with a `superseded` status.
+
+PostgreSQL is the canonical record for fact content and provenance. Qdrant indexing, embeddings, and LLM-based fact extraction are not connected yet. The schema change is in the Prisma migrations; apply pending migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
+
 ## Redis working memory
 
 Start Redis on `127.0.0.1:6379`, then run the demo:
