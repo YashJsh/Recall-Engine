@@ -8,8 +8,10 @@
   "include": [
     "src/episodic-memory.ts",
     "src/semantic-memory.ts",
+    "src/semantic-fact-extractor.ts",
     "src/postgres-client.ts",
     "tests/episodic-memory.test.ts",
-    "tests/semantic-memory.test.ts"
+    "tests/semantic-memory.test.ts",
+    "tests/semantic-fact-extractor.test.ts"
   ]
 }

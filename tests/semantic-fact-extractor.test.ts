@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { GroqSemanticFactExtractor } from "../src/semantic-fact-extractor.js";
+
+describe("GroqSemanticFactExtractor", () => {
+  it("returns candidates with source IDs from user messages only", async () => {
+    const extractor = new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: {
+          completions: {
+            create: async () => ({
+              choices: [{ message: { content: JSON.stringify({ facts: [
+                {
+                  content: "The user chose Redis for working memory.",
+                  category: "preference",
+                  sourceMessageId: "user-2",
+                },
+              ] }) } }],
+            }),
+          },
+        },
+      },
+    });
+
+    const candidates = await extractor.extract([
+      { id: "user-1", role: "user", content: "Which should I use?" },
+      { id: "assistant-1", role: "assistant", content: "Redis may fit your use case." },
+      { id: "user-2", role: "user", content: "Yes, let's use Redis." },
+    ]);
+
+    assert.deepEqual(candidates, [{
+      content: "The user chose Redis for working memory.",
+      category: "preference",
+      sourceMessageId: "user-2",
+    }]);
+  });
+
+  it("rejects a candidate that cites assistant or unknown context", async () => {
+    const extractor = new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: {
+          completions: {
+            create: async () => ({
+              choices: [{ message: { content: JSON.stringify({ facts: [
+                { content: "An unsupported claim.", category: "profile", sourceMessageId: "assistant-1" },
+              ] }) } }],
+            }),
+          },
+        },
+      },
+    });
+
+    await assert.rejects(
+      extractor.extract([
+        { id: "user-1", role: "user", content: "Hello." },
+        { id: "assistant-1", role: "assistant", content: "You like hiking." },
+      ]),
+      /must cite a supplied user message/,
+    );
+  });
+
+  it("returns no candidates when Groq finds no durable fact", async () => {
+    const extractor = new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: { completions: { create: async () => ({ choices: [
+          { message: { content: JSON.stringify({ facts: [] }) } },
+        ] }) } },
+      },
+    });
+
+    assert.deepEqual(await extractor.extract([
+      { id: "user-1", role: "user", content: "Hi." },
+    ]), []);
+  });
+
+  it("rejects malformed JSON and unsupported categories", async () => {
+    const makeExtractor = (content: string) => new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: { completions: { create: async () => ({ choices: [{ message: { content } }] }) } },
+      },
+    });
+    const messages = [{ id: "user-1", role: "user" as const, content: "I live in Pune." }];
+
+    await assert.rejects(makeExtractor("not json").extract(messages), /invalid JSON/);
+    await assert.rejects(
+      makeExtractor(JSON.stringify({ facts: [
+        { content: "The user lives in Pune.", category: "location", sourceMessageId: "user-1" },
+      ] })).extract(messages),
+      /invalid semantic fact candidate/,
+    );
+  });
+});

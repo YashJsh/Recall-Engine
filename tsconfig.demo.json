@@ -7,7 +7,9 @@
   },
   "include": [
     "src/working-memory.ts",
+    "src/semantic-fact-extractor.ts",
     "src/redis-client.ts",
-    "examples/working-memory-demo.ts"
+    "examples/working-memory-demo.ts",
+    "examples/semantic-fact-extraction-demo.ts"
   ]
 }
