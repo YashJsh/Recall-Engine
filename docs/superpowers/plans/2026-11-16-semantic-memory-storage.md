@@ -49,31 +49,31 @@
 - If `supersedesMemoryId` is supplied, `create` only replaces an active fact for the same tenant/user, marks that predecessor superseded, and creates the new row in the same transaction. Invalid or already superseded targets raise `SemanticMemorySupersessionError`.
 - Invalid/missing source references raise `SemanticMemorySourceError`; content and scope are validated before persistence.
 
-- [ ] **Step 1: Write the PostgreSQL integration tests** in `tests/semantic-memory.test.ts` for creating and tracing a fact; missing or mismatched source rejection; same-tenant cross-user rejection; tenant/user-scoped ID lookup; successful supersession with the predecessor retained; and invalid supersession rejection. Use separate tenant/user/session/conversation fixtures, following the setup and cleanup pattern in `tests/episodic-memory.test.ts`.
+- [x] **Step 1: Write the PostgreSQL integration tests** in `tests/semantic-memory.test.ts` for creating and tracing a fact; missing or mismatched source rejection; same-tenant cross-user rejection; tenant/user-scoped ID lookup; successful supersession with the predecessor retained; and invalid supersession rejection. Use separate tenant/user/session/conversation fixtures, following the setup and cleanup pattern in `tests/episodic-memory.test.ts`.
 
-- [ ] **Step 2: Run the focused test command to confirm the tests fail before implementation.** Add the new test file to `tsconfig.episodic-test.json` and the Node test command in `package.json` first.
+- [x] **Step 2: Run the focused test command to confirm the tests fail before implementation.** Add the new test file to `tsconfig.episodic-test.json` and the Node test command in `package.json` first.
 
   Run: `npm run test:episodic`
 
   Expected: FAIL because the semantic memory store/model does not exist yet.
 
-- [ ] **Step 3: Add the Prisma schema and migration.** Add the category and status enums and `SemanticMemory` model with a UUID ID, tenant/user ownership, fact text, source conversation/message IDs, optional superseded-memory ID, and timestamps. Add the relations and indexes needed to enforce tenant/source-message integrity and query a user's active facts. Generate and apply the migration using the existing scripts.
+- [x] **Step 3: Add the Prisma schema and migration.** Add the category and status enums and `SemanticMemory` model with a UUID ID, tenant/user ownership, fact text, source conversation/message IDs, optional superseded-memory ID, and timestamps. Add the relations and indexes needed to enforce tenant/source-message integrity and query a user's active facts. Generate and apply the migration using the existing scripts.
 
   Run: `npm run db:migrate`
 
   Expected: Prisma creates/applies the semantic memory migration and regenerates the client without errors.
 
-- [ ] **Step 4: Implement `SemanticMemoryStore` in `src/semantic-memory.ts`.** Validate owner scope and nonblank content. Confirm the source message belongs to the supplied source conversation and that its conversation belongs to the supplied tenant/user. In a Prisma transaction, validate and mark an optional active predecessor as superseded, then create the new record. Fetch by ID with tenant/user filters and include the source message (and its conversation) so callers can trace the fact.
+- [x] **Step 4: Implement `SemanticMemoryStore` in `src/semantic-memory.ts`.** Validate owner scope and nonblank content. Confirm the source message belongs to the supplied source conversation and that its conversation belongs to the supplied tenant/user. In a Prisma transaction, validate and mark an optional active predecessor as superseded, then create the new record. Fetch by ID with tenant/user filters and include the source message (and its conversation) so callers can trace the fact.
 
-- [ ] **Step 5: Run the focused PostgreSQL integration tests and verify they pass.**
+- [x] **Step 5: Run the focused PostgreSQL integration tests and verify they pass.**
 
   Run: `npm run test:episodic`
 
   Expected: All episodic and semantic memory integration tests pass; semantic cases prove provenance, isolation, and supersession behavior.
 
-- [ ] **Step 6: Document the new storage slice in `README.md`.** Explain the distinction between PostgreSQL's canonical fact/provenance record and future Qdrant indexing, and document the migration and focused-test commands.
+- [x] **Step 6: Document the new storage slice in `README.md`.** Explain the distinction between PostgreSQL's canonical fact/provenance record and future Qdrant indexing, and document the migration and focused-test commands.
 
-- [ ] **Step 7: Run project checks and inspect the final diff.**
+- [x] **Step 7: Run project checks and inspect the final diff.**
 
   Run: `npm run check`
 
@@ -87,7 +87,7 @@
 
   Expected: No whitespace errors.
 
-- [ ] **Step 8: Commit the completed storage slice.**
+- [x] **Step 8: Commit the completed storage slice.**
 
   ```bash
   git add prisma/schema.prisma prisma/migrations src/semantic-memory.ts tests/semantic-memory.test.ts tsconfig.episodic-test.json package.json README.md
