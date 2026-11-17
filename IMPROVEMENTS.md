@@ -36,6 +36,8 @@ Add a self-relation with a composite foreign key from `(tenantId, userId, supers
 
 The extractor rewrites short confirmations into standalone facts. Its candidate and the current `SemanticMemory` record carry only one `sourceMessageId`. In the live sample, a combined Redis/PostgreSQL fact cited the user's short “Yes, that is the design I want” reply. The fact text made sense on its own, but following that one source message did not show what the user had confirmed.
 
+A second live sample showed the prompt instruction is not enough to guarantee standalone facts. Given “I can remind you every Friday at 9 AM” followed by “Yes, Friday at 9 AM works,” the extractor returned “The user agrees to a reminder on Friday at 9 AM” instead of stating the reminder preference directly. We need to iterate on this behavior and test it with a small set of confirmation examples before relying on extracted candidates.
+
 ### Proposed improvement
 
-Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Update the store/schema and evaluate that a reviewer can understand both the fact and why it was extracted from its provenance.
+Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Iterate on prompt and/or validation behavior until confirmations are converted to the underlying fact, then evaluate a set of examples and confirm a reviewer can understand both the fact and why it was extracted from its provenance.
