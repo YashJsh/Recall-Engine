@@ -27,3 +27,15 @@ Before and after implementing the anchor, run the same representative long conve
 ### Proposed improvement
 
 Add a self-relation with a composite foreign key from `(tenantId, userId, supersedesMemoryId)` to `(tenantId, userId, id)`. Define the deletion behavior deliberately so removing or retaining prior facts cannot silently break a chain. Add migration and integration coverage for a valid same-owner link, a missing predecessor, a cross-owner predecessor, and deletion behavior.
+
+## Preserve complete evidence for facts confirmed across turns
+
+**Status:** Deferred until the semantic extraction and storage flows are evaluated together.
+
+### Current behavior and risk
+
+The extractor rewrites short confirmations into standalone facts. Its candidate and the current `SemanticMemory` record carry only one `sourceMessageId`. In the live sample, a combined Redis/PostgreSQL fact cited the user's short “Yes, that is the design I want” reply. The fact text made sense on its own, but following that one source message did not show what the user had confirmed.
+
+### Proposed improvement
+
+Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Update the store/schema and evaluate that a reviewer can understand both the fact and why it was extracted from its provenance.

@@ -36,6 +36,28 @@ describe("GroqSemanticFactExtractor", () => {
     }]);
   });
 
+  it("instructs Groq to write standalone facts instead of confirmation statements", async () => {
+    let systemPrompt = "";
+    const extractor = new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: {
+          completions: {
+            create: async (params) => {
+              systemPrompt = params.messages[0]?.role === "system" ? params.messages[0].content as string : "";
+              return { choices: [{ message: { content: JSON.stringify({ facts: [] }) } }] };
+            },
+          },
+        },
+      },
+    });
+
+    await extractor.extract([{ id: "user-1", role: "user", content: "Yes, that is right." }]);
+
+    assert.match(systemPrompt, /standalone statement/i);
+    assert.match(systemPrompt, /Do not output.*confirmation/i);
+  });
+
   it("rejects a candidate that cites assistant or unknown context", async () => {
     const extractor = new GroqSemanticFactExtractor({
       apiKey: "test-key",

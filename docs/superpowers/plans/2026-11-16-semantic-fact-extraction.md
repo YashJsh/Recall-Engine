@@ -39,4 +39,5 @@
 
 - Ensure context text is treated as untrusted input and assistant text is not accepted as fact evidence.
 - Ensure candidates cannot cite message IDs outside the supplied context or cross role boundaries.
+- Ensure fact text is standalone and contextual confirmations do not become vague or duplicate facts.
 - Ensure the demo cannot write to PostgreSQL.

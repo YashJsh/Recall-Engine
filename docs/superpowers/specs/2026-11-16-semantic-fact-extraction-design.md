@@ -22,6 +22,8 @@ Included: manual service, response validation, fake-client or parser level tests
 
 - A caller can provide a short conversation context with message IDs and receive zero or more typed fact candidates.
 - Every candidate cites a supplied user message ID; assistant message IDs are never accepted as evidence.
+- Every candidate is phrased as a standalone assertion that makes sense without the conversation; confirmations are rewritten as the fact being confirmed.
+- A confirmation that adds no new information does not create a duplicate candidate when the original user statement is already present.
 - Invalid or malformed model output fails clearly rather than becoming a stored fact.
 - The service has no persistence side effect and remains independently testable without an API key.
 - A separate demo can call Groq and print proposed candidates without writing to the database.
