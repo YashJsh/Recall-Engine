@@ -38,6 +38,8 @@ The extractor rewrites short confirmations into standalone facts. Its candidate 
 
 A second live sample showed the prompt instruction is not enough to guarantee standalone facts. Given “I can remind you every Friday at 9 AM” followed by “Yes, Friday at 9 AM works,” the extractor returned “The user agrees to a reminder on Friday at 9 AM” instead of stating the reminder preference directly. We need to iterate on this behavior and test it with a small set of confirmation examples before relying on extracted candidates.
 
+The prompt now includes explicit confirmation and correction examples. A follow-up live check returned “The user wants a weekly review reminder on Fridays at 9 AM” for the confirmation case, and “The user wants to use Redis directly for working memory” for a Redis correction. These two examples pass, but broader evaluation is still needed. The confirmation cites the confirming user message, while the correction cites the original user statement.
+
 ### Proposed improvement
 
-Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Iterate on prompt and/or validation behavior until confirmations are converted to the underlying fact, then evaluate a set of examples and confirm a reviewer can understand both the fact and why it was extracted from its provenance.
+Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Expand the confirmation/correction evaluation set and confirm a reviewer can understand both each fact and why it was extracted from its provenance.

@@ -58,6 +58,29 @@ describe("GroqSemanticFactExtractor", () => {
     assert.match(systemPrompt, /Do not output.*confirmation/i);
   });
 
+  it("includes examples for confirmations and corrections", async () => {
+    let systemPrompt = "";
+    const extractor = new GroqSemanticFactExtractor({
+      apiKey: "test-key",
+      client: {
+        chat: {
+          completions: {
+            create: async (params) => {
+              systemPrompt = params.messages[0]?.role === "system" ? params.messages[0].content as string : "";
+              return { choices: [{ message: { content: JSON.stringify({ facts: [] }) } }] };
+            },
+          },
+        },
+      },
+    });
+
+    await extractor.extract([{ id: "user-1", role: "user", content: "Use Redis." }]);
+
+    assert.match(systemPrompt, /weekly review reminder on Fridays at 9 AM/i);
+    assert.match(systemPrompt, /correction/i);
+    assert.match(systemPrompt, /user wants to use Redis for working memory/i);
+  });
+
   it("rejects a candidate that cites assistant or unknown context", async () => {
     const extractor = new GroqSemanticFactExtractor({
       apiKey: "test-key",
