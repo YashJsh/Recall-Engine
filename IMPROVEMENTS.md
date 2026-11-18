@@ -1,6 +1,6 @@
 # Future Improvements
 
-## Keep the conversation's original user prompt available during summarization
+## 1. Keep the conversation's original user prompt available during summarization
 
 **Status:** Deferred until the project is complete. The current summary flow is acceptable for now.
 
@@ -16,7 +16,7 @@ Keep the conversation's initial user prompt (or a concise, explicitly confirmed 
 
 Before and after implementing the anchor, run the same representative long conversations through both summary flows. Compare whether each final summary retains the original user goal, key constraints, and decisions. Record examples where the anchored version improves the result, makes no difference, or causes unwanted bias. Keep this as an evaluation first; decide whether to retain the change based on the observed summaries.
 
-## Enforce semantic-memory supersession links in PostgreSQL
+## 2. Enforce semantic-memory supersession links in PostgreSQL
 
 **Status:** Deferred. `SemanticMemoryStore` validates supersession targets, but the database does not enforce this relationship.
 
@@ -28,7 +28,7 @@ Before and after implementing the anchor, run the same representative long conve
 
 Add a self-relation with a composite foreign key from `(tenantId, userId, supersedesMemoryId)` to `(tenantId, userId, id)`. Define the deletion behavior deliberately so removing or retaining prior facts cannot silently break a chain. Add migration and integration coverage for a valid same-owner link, a missing predecessor, a cross-owner predecessor, and deletion behavior.
 
-## Preserve complete evidence for facts confirmed across turns
+## 3. Preserve complete evidence for facts confirmed across turns
 
 **Status:** Deferred until the semantic extraction and storage flows are evaluated together.
 
@@ -44,7 +44,7 @@ The prompt now includes explicit confirmation and correction examples. A follow-
 
 Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Expand the confirmation/correction evaluation set and confirm a reviewer can understand both each fact and why it was extracted from its provenance.
 
-## Avoid saving the same fact across repeated extraction runs
+## 4. Avoid saving the same fact across repeated extraction runs
 
 **Status:** Partly addressed; semantic comparison now runs when Qdrant is configured.
 
@@ -56,14 +56,20 @@ Keep the fact text self-contained, and support multiple provenance references so
 
 Before attaching automatic extraction to every turn, make indexing durable and retryable, then evaluate repeated mentions across separate calls. Add a database-level idempotency or reconciliation strategy for vector-index failures.
 
-## Keep PostgreSQL and Qdrant indexes in sync
+## 5. Keep PostgreSQL and Qdrant indexes in sync
 
-**Status:** Deferred; the current app service writes PostgreSQL first, then Qdrant.
+**Status:** Deferred to a later iteration; the current app service writes PostgreSQL first, then Qdrant.
 
 ### Current behavior and risk
 
-PostgreSQL is authoritative. If a Qdrant upsert fails after the PostgreSQL fact is created, the fact remains valid but is missing from semantic search. Status changes and deletion also need corresponding Qdrant updates.
+PostgreSQL is authoritative. If a Qdrant upsert fails after the PostgreSQL fact is created, the fact remains valid but is missing from semantic search. A supersession can also update PostgreSQL while the matching Qdrant status update fails, leaving an outdated vector searchable until it is repaired. PostgreSQL and Qdrant do not share a transaction, so they cannot be changed atomically at the exact same moment.
 
 ### Proposed improvement
 
-Add a durable indexing/outbox record or reconciliation job so failed Qdrant writes can be retried and deleted or superseded facts cannot remain searchable as active. Test recovery after Qdrant is unavailable during a write.
+Use a transactional outbox in PostgreSQL. In the same PostgreSQL transaction that creates a fact or supersedes an existing one, save durable work describing the required Qdrant upsert and status change. A retryable worker processes that work and marks it complete only after Qdrant confirms the change. Use the stable semantic-memory ID so retries are idempotent, and provide a reconciliation path to find and repair missing or stale vectors.
+
+This gives recoverable eventual consistency: if Qdrant is unavailable, the PostgreSQL fact and its pending indexing work remain durable, and processing can resume later. PostgreSQL stays the source of truth; semantic search should continue verifying returned IDs and active status against PostgreSQL. This does not provide instantaneous all-or-nothing commits across both systems, because they do not participate in one shared transaction.
+
+### Recovery evaluation
+
+Test failures after the PostgreSQL transaction, during the Qdrant upsert, and after Qdrant succeeds but before the outbox item is marked complete. Confirm retries do not create duplicate vectors, superseded facts stop appearing as active after recovery, and reconciliation repairs a deliberately missing or stale vector.
