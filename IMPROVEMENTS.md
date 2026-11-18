@@ -46,15 +46,15 @@ Keep the fact text self-contained, and support multiple provenance references so
 
 ## Avoid saving the same fact across repeated extraction runs
 
-**Status:** Deferred until the application-level extraction trigger is added.
+**Status:** Partly addressed; semantic comparison now runs when Qdrant is configured.
 
 ### Current behavior and risk
 
-`AutomaticSemanticMemoryService` removes duplicate candidates within one extraction batch. It does not check whether an equivalent active fact was saved by an earlier run. Calling it after every user message could therefore create repeated semantic-memory rows for the same preference or project fact.
+`AutomaticSemanticMemoryService` searches Qdrant for up to five similar active facts for the same tenant/user and asks Groq whether each candidate is the same, new, updated, or uncertain. This avoids many repeated writes when the vector index is current. It does not provide a database idempotency guarantee if Qdrant is unavailable, stale, or omitted from service configuration.
 
 ### Proposed improvement
 
-Before attaching automatic extraction to every turn, add a persistent idempotency or active-fact comparison strategy. Test repeated mentions across separate calls and decide when a new fact should link to or supersede an existing one.
+Before attaching automatic extraction to every turn, make indexing durable and retryable, then evaluate repeated mentions across separate calls. Add a database-level idempotency or reconciliation strategy for vector-index failures.
 
 ## Keep PostgreSQL and Qdrant indexes in sync
 

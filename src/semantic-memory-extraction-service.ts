@@ -2,7 +2,12 @@ import { SemanticMemoryCategory, type SemanticMemoryCategory as SemanticMemoryCa
 import type { ExtractionMessage, SemanticFactCandidate } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope, SemanticMemoryRecord } from "./semantic-memory.js";
 import { SemanticMemoryStore } from "./semantic-memory.js";
-import type { SemanticMemoryVectorInput } from "./semantic-memory-vector-store.js";
+import { GroqSemanticFactComparator, type SemanticFactComparator } from "./semantic-fact-comparator.js";
+import type {
+  SemanticMemoryVectorInput,
+  SemanticMemoryVectorScope,
+  SimilarSemanticMemoryId,
+} from "./semantic-memory-vector-store.js";
 
 export interface SemanticFactExtractor {
   extract(messages: ExtractionMessage[]): Promise<SemanticFactCandidate[]>;
@@ -10,13 +15,21 @@ export interface SemanticFactExtractor {
 
 export interface SemanticMemoryIndexer {
   index(memory: SemanticMemoryVectorInput): Promise<void>;
+  updateStatus(memoryId: string, status: "active" | "superseded"): Promise<void>;
+  findSimilar(
+    scope: SemanticMemoryVectorScope,
+    queryText: string,
+    options?: { limit?: number; scoreThreshold?: number },
+  ): Promise<SimilarSemanticMemoryId[]>;
 }
 
 export type SkippedSemanticFactReason =
   | "unsupported_source"
   | "confirmation_only"
   | "invalid_candidate"
-  | "duplicate_in_batch";
+  | "duplicate_in_batch"
+  | "same_as_existing"
+  | "uncertain_comparison";
 
 export interface SkippedSemanticFact {
   candidate: SemanticFactCandidate;
@@ -27,6 +40,7 @@ export interface AutomaticSemanticMemoryResult {
   extracted: SemanticFactCandidate[];
   saved: SemanticMemoryRecord[];
   skipped: SkippedSemanticFact[];
+  supersededMemoryIds: string[];
 }
 
 const CATEGORIES = Object.values(SemanticMemoryCategory);
@@ -34,11 +48,16 @@ const CONFIRMATION_ONLY_PATTERN = /^(?:the\s+)?user\s+(?:agrees?|agreed|confirms
 
 /** Extracts candidate facts, applies basic quality/provenance checks, and saves suitable facts. */
 export class AutomaticSemanticMemoryService {
+  private readonly comparator?: SemanticFactComparator;
+
   constructor(
     private readonly extractor: SemanticFactExtractor,
     private readonly store: SemanticMemoryStore,
     private readonly vectorStore?: SemanticMemoryIndexer,
-  ) {}
+    comparator?: SemanticFactComparator,
+  ) {
+    this.comparator = comparator ?? (vectorStore ? new GroqSemanticFactComparator() : undefined);
+  }
 
   async extractAndSave(
     scope: SemanticMemoryScope,
@@ -51,6 +70,7 @@ export class AutomaticSemanticMemoryService {
     );
     const saved: SemanticMemoryRecord[] = [];
     const skipped: SkippedSemanticFact[] = [];
+    const supersededMemoryIds: string[] = [];
     const seenFacts = new Set<string>();
 
     for (const candidate of extracted) {
@@ -74,16 +94,51 @@ export class AutomaticSemanticMemoryService {
       }
       seenFacts.add(dedupeKey);
 
+      let supersedesMemoryId: string | undefined;
+      if (this.vectorStore && this.comparator) {
+        const similarIds = await this.vectorStore.findSimilar(scope, candidate.content, { limit: 5 });
+        const similarFacts = await this.loadActiveSimilarFacts(scope, similarIds);
+        if (similarFacts.length > 0) {
+          const comparison = await this.comparator.compare(candidate, similarFacts);
+          if (comparison.action === "same") {
+            skipped.push({ candidate, reason: "same_as_existing" });
+            continue;
+          }
+          if (comparison.action === "uncertain") {
+            skipped.push({ candidate, reason: "uncertain_comparison" });
+            continue;
+          }
+          if (comparison.action === "update") supersedesMemoryId = comparison.existingMemoryId;
+        }
+      }
+
       const record = await this.store.create(scope, {
         content: candidate.content.trim(),
         category: candidate.category,
         sourceConversationId,
         sourceMessageId: candidate.sourceMessageId,
+        ...(supersedesMemoryId ? { supersedesMemoryId } : {}),
       });
       if (this.vectorStore) await this.vectorStore.index(record);
+      if (supersedesMemoryId) {
+        if (this.vectorStore) await this.vectorStore.updateStatus(supersedesMemoryId, "superseded");
+        supersededMemoryIds.push(supersedesMemoryId);
+      }
       saved.push(record);
     }
 
-    return { extracted, saved, skipped };
+    return { extracted, saved, skipped, supersededMemoryIds };
+  }
+
+  private async loadActiveSimilarFacts(
+    scope: SemanticMemoryScope,
+    matches: SimilarSemanticMemoryId[],
+  ) {
+    const records = await Promise.all(matches.map(({ semanticMemoryId }) =>
+      this.store.getById(scope, semanticMemoryId),
+    ));
+    return records
+      .filter((record): record is SemanticMemoryRecord => record !== null && record.status === "active")
+      .map(({ id, content, category }) => ({ id, content, category }));
   }
 }
