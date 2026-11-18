@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "./generated/prisma/client.js";
 import {
+  MessageRole,
   SemanticMemoryStatus,
   type SemanticMemoryCategory,
 } from "./generated/prisma/enums.js";
@@ -63,6 +64,7 @@ export class SemanticMemoryStore {
           tenantId: scope.tenantId,
           conversationId: input.sourceConversationId,
           id: input.sourceMessageId,
+          role: MessageRole.user,
           conversation: {
             is: { tenantId: scope.tenantId, userId: scope.userId },
           },

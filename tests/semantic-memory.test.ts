@@ -134,6 +134,29 @@ describe("SemanticMemoryStore", () => {
     }
   });
 
+  it("rejects an assistant message as fact provenance", async () => {
+    const owner = await createOwner();
+    try {
+      const assistantMessage = await episodicMemory.appendMessage(
+        { ...owner.scope, sessionId: owner.sessionId },
+        owner.conversationId,
+        { role: MessageRole.assistant, content: "The user prefers Redis." },
+      );
+
+      await assert.rejects(
+        semanticMemory.create(owner.scope, {
+          content: "The user prefers Redis.",
+          category: SemanticMemoryCategory.preference,
+          sourceConversationId: owner.conversationId,
+          sourceMessageId: assistantMessage.id,
+        }),
+        SemanticMemorySourceError,
+      );
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
   it("rejects a message from a different conversation", async () => {
     const owner = await createOwner();
     try {
