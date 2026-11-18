@@ -73,3 +73,19 @@ This gives recoverable eventual consistency: if Qdrant is unavailable, the Postg
 ### Recovery evaluation
 
 Test failures after the PostgreSQL transaction, during the Qdrant upsert, and after Qdrant succeeds but before the outbox item is marked complete. Confirm retries do not create duplicate vectors, superseded facts stop appearing as active after recovery, and reconciliation repairs a deliberately missing or stale vector.
+
+## 6. Reevaluate which database is authoritative for semantic memories
+
+**Status:** Deferred. PostgreSQL is the source of truth for the current design; Qdrant is a semantic search index.
+
+### Why PostgreSQL is authoritative today
+
+Qdrant finds likely matches, while PostgreSQL verifies the fact ID, tenant/user ownership, current status, exact text, and provenance before the fact is used. This keeps the searchable index from becoming the only place that can explain or validate a remembered fact. It also means a stale Qdrant result can be rejected after a fact is superseded in PostgreSQL.
+
+### Alternative to evaluate
+
+Consider storing and serving the canonical fact content directly from Qdrant, which could remove the PostgreSQL lookup from retrieval and simplify reads. That would also make Qdrant consistency and backup/recovery behavior part of the correctness boundary: a stale payload could give the model an outdated fact, and PostgreSQL could no longer independently confirm the current text and status.
+
+### Evaluation before changing the choice
+
+After the retrieval and recovery flows are implemented, compare both designs for read latency, ownership/status guarantees, supersession behavior, provenance traceability, tenant isolation, backup/restore, and recovery after partial writes. Decide whether the simpler read is worth making the vector database authoritative, and document which system owns fact history if the design changes. Do not remove PostgreSQL's semantic-memory records until this evaluation is complete.
