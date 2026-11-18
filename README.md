@@ -44,20 +44,16 @@ npm run test:episodic
 
 PostgreSQL is the canonical record for fact content and provenance. `SemanticMemoryVectorStore` creates local embeddings with FastEmbed, stores them in Qdrant under the semantic-memory ID, and scopes similarity search by tenant, user, and active status. Search returns IDs and scores; callers load and verify fact content in PostgreSQL. Pass a `SemanticMemoryVectorStore` as the third dependency to `AutomaticSemanticMemoryService`; it uses Groq for comparisons by default. Start the local Qdrant container with `npm run qdrant:up`; configure `QDRANT_URL` and `QDRANT_COLLECTION` in `.env`. The first embedding request downloads the FastEmbed model into the ignored `local_cache/` directory and runs it locally. Apply PostgreSQL migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
 
-`SemanticMemoryRetrievalService` uses the latest user request to search Qdrant for relevant active fact IDs, then verifies each result in PostgreSQL under the same tenant/user scope and drops missing or superseded facts. The returned facts retain Qdrant's relevance order and include their provenance IDs. `formatSemanticMemoryPromptContext` turns them into a labeled JSON reference block that tells the model to treat stored text as data, not instructions, and to prioritize the current request if it conflicts. A caller can append this block to its system prompt before calling `ConversationContextCompactor.build`; the compactor will count it as part of the prompt. This remains an explicit caller step and is not automatically run on each turn.
+`ConversationPromptBuilder` connects retrieval to prompt assembly. After the latest user message has been saved to the conversation, the caller passes its text, the conversation scope/ID, and the system prompt. The builder retrieves relevant memories, adds them as labeled JSON reference data, and calls `ConversationContextCompactor` so the full prompt—including the memory block—is counted against the token budget. Its `messages` can be sent to the model provider. Retrieval remains an explicit caller step; it is not automatically run on every turn.
 
 ```ts
-const memories = await retrievalService.retrieve(
-  { tenantId, userId },
+const prompt = await conversationPromptBuilder.build(
+  conversationScope,
+  conversationId,
+  systemPrompt,
   latestUserMessage.content,
 );
-const memoryContext = formatSemanticMemoryPromptContext(memories);
-const context = await contextCompactor.build(
-  { tenantId, userId, sessionId },
-  conversationId,
-  memoryContext ? `${systemPrompt}\n\n${memoryContext}` : systemPrompt,
-);
-// Send context.messages to the model.
+// Send prompt.messages to the model provider.
 ```
 
 ## Redis working memory
