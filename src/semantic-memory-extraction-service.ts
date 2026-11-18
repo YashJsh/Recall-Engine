@@ -2,9 +2,14 @@ import { SemanticMemoryCategory, type SemanticMemoryCategory as SemanticMemoryCa
 import type { ExtractionMessage, SemanticFactCandidate } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope, SemanticMemoryRecord } from "./semantic-memory.js";
 import { SemanticMemoryStore } from "./semantic-memory.js";
+import type { SemanticMemoryVectorInput } from "./semantic-memory-vector-store.js";
 
 export interface SemanticFactExtractor {
   extract(messages: ExtractionMessage[]): Promise<SemanticFactCandidate[]>;
+}
+
+export interface SemanticMemoryIndexer {
+  index(memory: SemanticMemoryVectorInput): Promise<void>;
 }
 
 export type SkippedSemanticFactReason =
@@ -32,6 +37,7 @@ export class AutomaticSemanticMemoryService {
   constructor(
     private readonly extractor: SemanticFactExtractor,
     private readonly store: SemanticMemoryStore,
+    private readonly vectorStore?: SemanticMemoryIndexer,
   ) {}
 
   async extractAndSave(
@@ -68,12 +74,14 @@ export class AutomaticSemanticMemoryService {
       }
       seenFacts.add(dedupeKey);
 
-      saved.push(await this.store.create(scope, {
+      const record = await this.store.create(scope, {
         content: candidate.content.trim(),
         category: candidate.category,
         sourceConversationId,
         sourceMessageId: candidate.sourceMessageId,
-      }));
+      });
+      if (this.vectorStore) await this.vectorStore.index(record);
+      saved.push(record);
     }
 
     return { extracted, saved, skipped };

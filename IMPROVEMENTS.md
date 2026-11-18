@@ -55,3 +55,15 @@ Keep the fact text self-contained, and support multiple provenance references so
 ### Proposed improvement
 
 Before attaching automatic extraction to every turn, add a persistent idempotency or active-fact comparison strategy. Test repeated mentions across separate calls and decide when a new fact should link to or supersede an existing one.
+
+## Keep PostgreSQL and Qdrant indexes in sync
+
+**Status:** Deferred; the current app service writes PostgreSQL first, then Qdrant.
+
+### Current behavior and risk
+
+PostgreSQL is authoritative. If a Qdrant upsert fails after the PostgreSQL fact is created, the fact remains valid but is missing from semantic search. Status changes and deletion also need corresponding Qdrant updates.
+
+### Proposed improvement
+
+Add a durable indexing/outbox record or reconciliation job so failed Qdrant writes can be retried and deleted or superseded facts cannot remain searchable as active. Test recovery after Qdrant is unavailable during a write.

@@ -42,7 +42,7 @@ npm run test:episodic
 
 `GroqSemanticFactExtractor` proposes fact candidates from caller-supplied, ID-tagged user/assistant messages. `AutomaticSemanticMemoryService` checks that candidate sources are supplied user messages, skips vague confirmation-only candidates and duplicates within the current batch, then saves the remaining facts using `SemanticMemoryStore`. The caller must supply messages already persisted in the same conversation so source-message IDs can be verified. This flow is an explicit application call; it is not attached to every conversation turn yet.
 
-PostgreSQL is the canonical record for fact content and provenance. Qdrant indexing and embeddings are not connected yet. The schema change is in the Prisma migrations; apply pending migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
+PostgreSQL is the canonical record for fact content and provenance. `SemanticMemoryVectorStore` creates local embeddings with FastEmbed, stores them in Qdrant under the semantic-memory ID, and scopes similarity search by tenant, user, and active status. Search returns IDs and scores; callers load and verify fact content in PostgreSQL. Pass a `SemanticMemoryVectorStore` as the third dependency to `AutomaticSemanticMemoryService` to index each newly saved fact. Start the local Qdrant container with `npm run qdrant:up`; configure `QDRANT_URL` and `QDRANT_COLLECTION` in `.env`. The first embedding request downloads the FastEmbed model and runs it locally. Apply PostgreSQL migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
 
 ## Redis working memory
 
