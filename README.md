@@ -40,7 +40,9 @@ npm run test:episodic
 
 `SemanticMemoryStore` saves one durable fact per record in PostgreSQL. Each record has a stable semantic-memory ID, tenant/user ownership, a category, and references to the source conversation and exact message. Fetching by ID returns the stored fact together with its source message, scoped to the owning tenant and user. Superseding a fact creates a new record and retains the prior one with a `superseded` status.
 
-PostgreSQL is the canonical record for fact content and provenance. Qdrant indexing, embeddings, and LLM-based fact extraction are not connected yet. The schema change is in the Prisma migrations; apply pending migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
+`GroqSemanticFactExtractor` proposes fact candidates from caller-supplied, ID-tagged user/assistant messages. `SemanticFactReviewService` passes each candidate to a caller-provided reviewer and saves only the candidates the reviewer approves, using `SemanticMemoryStore`. The caller must supply messages already persisted in the same conversation so source-message IDs can be verified. This flow is an explicit application call; it is not attached to every conversation turn.
+
+PostgreSQL is the canonical record for fact content and provenance. Qdrant indexing and embeddings are not connected yet. The schema change is in the Prisma migrations; apply pending migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
 
 ## Redis working memory
 
