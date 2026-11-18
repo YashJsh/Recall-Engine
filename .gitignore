@@ -3,6 +3,7 @@ dist/
 dist-test/
 dist-episodic-test/
 dist-demo/
+local_cache/
 src/generated/prisma/
 .env
 .env.*
