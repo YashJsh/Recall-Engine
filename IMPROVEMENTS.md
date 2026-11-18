@@ -43,3 +43,15 @@ The prompt now includes explicit confirmation and correction examples. A follow-
 ### Proposed improvement
 
 Keep the fact text self-contained, and support multiple provenance references so a stored fact can point to the original user statement and later user confirmation. If assistant messages are retained to explain context, keep them explicitly separate from user evidence. Expand the confirmation/correction evaluation set and confirm a reviewer can understand both each fact and why it was extracted from its provenance.
+
+## Avoid saving the same fact across repeated extraction runs
+
+**Status:** Deferred until the application-level extraction trigger is added.
+
+### Current behavior and risk
+
+`AutomaticSemanticMemoryService` removes duplicate candidates within one extraction batch. It does not check whether an equivalent active fact was saved by an earlier run. Calling it after every user message could therefore create repeated semantic-memory rows for the same preference or project fact.
+
+### Proposed improvement
+
+Before attaching automatic extraction to every turn, add a persistent idempotency or active-fact comparison strategy. Test repeated mentions across separate calls and decide when a new fact should link to or supersede an existing one.
