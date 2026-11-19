@@ -8,6 +8,7 @@
   "include": [
     "src/episodic-memory.ts",
     "src/conversation-prompt-builder.ts",
+    "src/conversation-turn-memory.ts",
     "src/semantic-memory.ts",
     "src/semantic-memory-retrieval.ts",
     "src/semantic-fact-extractor.ts",
@@ -15,6 +16,7 @@
     "src/postgres-client.ts",
     "tests/episodic-memory.test.ts",
     "tests/conversation-prompt-builder.test.ts",
+    "tests/conversation-turn-memory.test.ts",
     "tests/semantic-memory.test.ts",
     "tests/semantic-memory-retrieval.test.ts",
     "tests/semantic-fact-extractor.test.ts",

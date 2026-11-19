@@ -117,6 +117,26 @@ export class EpisodicMemory {
     });
   }
 
+  getMessageById(scope: ConversationScope, conversationId: string, messageId: string) {
+    this.validateScope(scope);
+    if (!conversationId.trim() || !messageId.trim()) return Promise.resolve(null);
+
+    return this.prisma.conversationMessage.findFirst({
+      where: {
+        id: messageId,
+        tenantId: scope.tenantId,
+        conversationId,
+        conversation: {
+          is: {
+            tenantId: scope.tenantId,
+            userId: scope.userId,
+            sessionId: scope.sessionId,
+          },
+        },
+      },
+    });
+  }
+
   saveSummary(
     scope: ConversationScope,
     conversationId: string,
