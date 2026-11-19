@@ -25,12 +25,13 @@ Provide a reusable memory layer behind an agent application. The consuming appli
 - If prompt preparation fails after the user message is persisted, the application receives an error and can decide how to resume; the user message remains in history.
 - If the application's model call fails, Recall Engine is not involved in that call. The saved user message remains available for a retry.
 - If persisting the assistant response fails, `completeTurn` returns an error because history would be incomplete.
+- The assistant reply is appended atomically only if the conversation still ends at the prepared user message. If another turn advanced the conversation first, the stale completion is rejected rather than inserted out of order.
 - If extraction, comparison, or indexing fails after the assistant response is saved, `completeTurn` returns the assistant response with a failed memory outcome. A partial memory write is possible; the transactional outbox and retry design remains deferred in `IMPROVEMENTS.md` item 5.
 
 ## Boundaries
 
 - This slice adds a provider-neutral memory lifecycle, not an HTTP server, UI, CLI chatbot, or conversational model adapter.
-- The current user message must already belong to the supplied tenant/user/session and conversation. The service validates prepared-message identity before completing a turn.
+- The current user message must already belong to the supplied tenant/user/session and conversation. The service validates prepared-message identity and sequence before completing a turn; only one completion may advance a conversation from that user message.
 - Extraction uses a bounded window of up to eight persisted messages ending at the current user message; the newly generated assistant reply is not treated as evidence for that turn's facts.
 
 ## Validation

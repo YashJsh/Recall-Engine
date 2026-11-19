@@ -81,6 +81,30 @@ describe("EpisodicMemory", () => {
     }
   });
 
+  it("looks up a message only within its conversation and owner scope", async () => {
+    const owner = await createOwner();
+    try {
+      const firstConversation = await memory.createConversation(owner.scope);
+      const otherConversation = await memory.createConversation(owner.scope);
+      const message = await memory.appendMessage(owner.scope, firstConversation.id, {
+        role: MessageRole.user,
+        content: "Scoped lookup sample.",
+      });
+
+      assert.equal(
+        (await memory.getMessageById(owner.scope, firstConversation.id, message.id))?.id,
+        message.id,
+      );
+      assert.equal(await memory.getMessageById(owner.scope, otherConversation.id, message.id), null);
+      assert.equal(
+        await memory.getMessageById({ ...owner.scope, userId: randomUUID() }, firstConversation.id, message.id),
+        null,
+      );
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
   it("stores versioned summaries with message checkpoints and rejects stale checkpoints", async () => {
     const owner = await createOwner();
     try {

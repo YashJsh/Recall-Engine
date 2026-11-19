@@ -4,7 +4,11 @@ import { after, before, describe, it } from "node:test";
 import { AutomaticSemanticMemoryService } from "../src/semantic-memory-extraction-service.js";
 import { SemanticMemoryCategory, MessageRole } from "../src/generated/prisma/enums.js";
 import { ConversationPromptBuilder } from "../src/conversation-prompt-builder.js";
-import { ConversationTurnMemoryService, PreparedConversationTurnError } from "../src/conversation-turn-memory.js";
+import {
+  ConversationTurnMemoryService,
+  ConversationTurnOrderError,
+  PreparedConversationTurnError,
+} from "../src/conversation-turn-memory.js";
 import { ConversationContextCompactor, type ContextTokenCounter } from "../src/context-compaction.js";
 import { EpisodicMemory, type ConversationScope } from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
@@ -192,6 +196,38 @@ describe("ConversationTurnMemoryService", () => {
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
       await prisma.tenant.delete({ where: { id: otherOwner.tenantId } });
+    }
+  });
+
+  it("rejects a second completion when two replies race for the same prepared turn", async () => {
+    const owner = await createOwner("Concurrent turn completion test");
+    const service = new ConversationTurnMemoryService(
+      episodicMemory,
+      createPromptBuilder([]),
+      {
+        async extractAndSave() {
+          return { extracted: [], saved: [], skipped: [], supersededMemoryIds: [] };
+        },
+      },
+    );
+
+    try {
+      const conversation = await episodicMemory.createConversation(owner.scope);
+      const prepared = await service.prepareTurn(owner.scope, conversation.id, "System prompt", "Tell me about recall.");
+      const results = await Promise.allSettled([
+        service.completeTurn(owner.scope, prepared, "First reply."),
+        service.completeTurn(owner.scope, prepared, "Duplicate reply."),
+      ]);
+      const fulfilled = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
+      const messages = await episodicMemory.listMessages(owner.scope, conversation.id);
+
+      assert.equal(fulfilled.length, 1);
+      assert.equal(rejected.length, 1);
+      assert.ok(rejected[0]?.status === "rejected" && rejected[0].reason instanceof ConversationTurnOrderError);
+      assert.equal(messages.filter(({ role }) => role === MessageRole.assistant).length, 1);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
     }
   });
 });

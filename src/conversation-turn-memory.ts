@@ -5,6 +5,8 @@ import type { AutomaticSemanticMemoryResult } from "./semantic-memory-extraction
 import type { ExtractionMessage } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
 
+export { ConversationTurnOrderError } from "./episodic-memory.js";
+
 const EXTRACTION_CONTEXT_LIMIT = 8;
 
 type PersistedMessage = NonNullable<
@@ -95,10 +97,12 @@ export class ConversationTurnMemoryService {
       throw new PreparedConversationTurnError();
     }
 
-    const assistantMessage = await this.episodicMemory.appendMessage(scope, preparedTurn.conversationId, {
-      role: MessageRole.assistant,
-      content: assistantContent,
-    });
+    const assistantMessage = await this.episodicMemory.appendAssistantReplyAfter(
+      scope,
+      preparedTurn.conversationId,
+      persistedUserMessage.sequenceNo,
+      assistantContent,
+    );
 
     let semanticMemory: SemanticMemoryTurnOutcome;
     try {

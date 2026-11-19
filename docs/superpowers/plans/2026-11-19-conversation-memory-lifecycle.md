@@ -6,7 +6,7 @@
 
 ## Files
 
-- Modify `src/episodic-memory.ts` to add a tenant/user/session/conversation-scoped message lookup for validating a prepared turn.
+- Modify `src/episodic-memory.ts` to add a tenant/user/session/conversation-scoped message lookup and an atomic assistant append conditioned on the prepared user message still being latest.
 - Create `src/conversation-turn-memory.ts` for the two-call application boundary and result types.
 - Create `tests/conversation-turn-memory.test.ts` for PostgreSQL-backed lifecycle and failure coverage.
 - Update `tsconfig.episodic-test.json` and the `test:episodic` script to include the new module and tests.
@@ -18,6 +18,7 @@
 ### 1. Add scoped message lookup
 
 - Add `EpisodicMemory.getMessageById(scope, conversationId, messageId)` scoped through tenant, user, session, and conversation.
+- Add `EpisodicMemory.appendAssistantReplyAfter(scope, conversationId, previousSequenceNo, content)`. In a transaction, increment the conversation sequence only when `nextSequenceNo` equals the prepared user sequence, then create the assistant message at the following sequence. Throw a turn-order error if the conversation already advanced.
 - Return the persisted message fields needed to validate role, content, and sequence number; return `null` for an out-of-scope or missing ID.
 - Cover a valid lookup and wrong conversation/user scope in episodic integration tests.
 
@@ -27,7 +28,7 @@
 - `prepareTurn(scope, conversationId, systemPrompt, userContent)` saves a user-role message, builds the prompt using that exact content, and returns the saved message plus model-ready prompt.
 - `completeTurn(scope, preparedTurn, assistantContent)` verifies the prepared message still exists with matching scope, ID, role, sequence, and content; saves the assistant message; loads at most eight messages ending at the user sequence; filters to user/assistant messages; then calls automatic extraction.
 - Return a success outcome with the extraction result, or a failed outcome with an error description if extraction throws. Do not roll back or hide the saved assistant reply.
-- Test host-model invocation between the two calls, message order and IDs passed to extraction, fact persistence, cross-scope prepared-turn rejection, and extraction failure after assistant persistence.
+- Test host-model invocation between the two calls, message order and IDs passed to extraction, fact persistence, cross-scope prepared-turn rejection, concurrent duplicate completion rejection, and extraction failure after assistant persistence.
 
 ### 3. Document and verify
 

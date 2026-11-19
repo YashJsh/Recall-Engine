@@ -1,5 +1,5 @@
 import type { PrismaClient } from "./generated/prisma/client.js";
-import type { MessageRole } from "./generated/prisma/enums.js";
+import { MessageRole, type MessageRole as MessageRoleType } from "./generated/prisma/enums.js";
 
 export interface ConversationScope {
   tenantId: string;
@@ -8,7 +8,7 @@ export interface ConversationScope {
 }
 
 export interface AppendMessageInput {
-  role: MessageRole;
+  role: MessageRoleType;
   content: string;
 }
 
@@ -27,6 +27,13 @@ export class SummaryCheckpointError extends Error {
   constructor() {
     super("The conversation summary checkpoint is stale or beyond the available messages");
     this.name = "SummaryCheckpointError";
+  }
+}
+
+export class ConversationTurnOrderError extends Error {
+  constructor() {
+    super("The conversation has advanced since this user turn was prepared");
+    this.name = "ConversationTurnOrderError";
   }
 }
 
@@ -71,6 +78,43 @@ export class EpisodicMemory {
           sequenceNo: conversation.nextSequenceNo,
           role: message.role,
           content: message.content,
+        },
+      });
+    });
+  }
+
+  appendAssistantReplyAfter(
+    scope: ConversationScope,
+    conversationId: string,
+    previousSequenceNo: number,
+    content: string,
+  ) {
+    this.validateScope(scope);
+    if (!Number.isInteger(previousSequenceNo) || previousSequenceNo < 1) {
+      throw new Error("previousSequenceNo must be a positive integer");
+    }
+    if (!content.trim()) throw new Error("message.content must not be empty");
+
+    return this.prisma.$transaction(async (transaction) => {
+      const advanced = await transaction.conversation.updateMany({
+        where: {
+          tenantId: scope.tenantId,
+          id: conversationId,
+          userId: scope.userId,
+          sessionId: scope.sessionId,
+          nextSequenceNo: previousSequenceNo,
+        },
+        data: { nextSequenceNo: { increment: 1 } },
+      });
+      if (advanced.count !== 1) throw new ConversationTurnOrderError();
+
+      return transaction.conversationMessage.create({
+        data: {
+          tenantId: scope.tenantId,
+          conversationId,
+          sequenceNo: previousSequenceNo + 1,
+          role: MessageRole.assistant,
+          content,
         },
       });
     });
