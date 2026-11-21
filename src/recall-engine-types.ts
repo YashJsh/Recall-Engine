@@ -104,6 +104,14 @@ export interface RecallSemanticMemoryFact {
   updatedAt: Date;
 }
 
+export interface RecallSemanticMemoryFactInput {
+  content: string;
+  category: RecallSemanticMemoryCategory;
+  sourceConversationId: string;
+  sourceMessageId: string;
+  supersedesMemoryId?: string;
+}
+
 export interface RecallRetrievedSemanticMemory {
   semanticMemoryId: string;
   content: string;
@@ -144,6 +152,8 @@ export interface PrepareTurnInput {
   conversationId: string;
   systemPrompt: string;
   userMessage: string;
+  /** Retry prompt preparation using the ID from ConversationPromptPreparationError. */
+  resumeUserMessageId?: string;
 }
 
 export interface CompleteTurnInput {
@@ -210,6 +220,9 @@ export interface RecallEngine {
       options?: RecallSemanticMemoryRetrievalOptions,
     ): Promise<RecallRetrievedSemanticMemory[]>;
     getById(scope: RecallSemanticMemoryScope, memoryId: string): Promise<RecallSemanticMemoryFact | null>;
+    saveFact(
+      input: RecallSemanticMemoryFactInput & { scope: RecallSemanticMemoryScope },
+    ): Promise<RecallSemanticMemoryFact>;
     extractAndSave(
       scope: RecallSemanticMemoryScope,
       sourceConversationId: string,

@@ -28,6 +28,7 @@ import { ConversationSummaryService, type SummaryGenerationInput, type SummaryGe
 import { GroqSummaryGenerator } from "./providers/groq-summary-generator.js";
 import { RedisWorkingMemory, type WorkingMemoryItem, type WorkingMemoryOptions } from "./working-memory.js";
 import type {
+  RecallContextCompactionResult,
   RecallAutomaticSemanticMemoryResult,
   RecallCompletedTurn,
   RecallConversation,
@@ -40,6 +41,7 @@ import type {
   RecallPreparedTurn,
   RecallRetrievedSemanticMemory,
   RecallSemanticMemoryFact,
+  RecallSemanticMemoryFactInput,
   RecallSemanticMemoryScope,
   RecallWorkingMemoryItem,
 } from "./recall-engine-types.js";
@@ -94,6 +96,7 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
       workingMemory,
       semanticStore,
       retrieval,
+      vectorStore,
       automaticMemory,
       close: () => closeClients(prisma, redis),
     });
@@ -112,6 +115,7 @@ interface EngineDependencies {
   workingMemory: RedisWorkingMemory;
   semanticStore: SemanticMemoryStore;
   retrieval: SemanticMemoryRetrievalService;
+  vectorStore: SemanticMemoryVectorStore;
   automaticMemory: LazyAutomaticSemanticMemoryService;
   close: () => Promise<void>;
 }
@@ -130,6 +134,7 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
           input.conversationId,
           input.systemPrompt,
           input.userMessage,
+          input.resumeUserMessageId,
         );
         return toPublicPreparedTurn(prepared);
       },
@@ -185,6 +190,17 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
       async getById(scope: RecallSemanticMemoryScope, memoryId: string): Promise<RecallSemanticMemoryFact | null> {
         const fact = await dependencies.semanticStore.getById(scope, memoryId);
         return fact ? toPublicFact(fact) : null;
+      },
+      async saveFact(
+        input: RecallSemanticMemoryFactInput & { scope: RecallSemanticMemoryScope },
+      ): Promise<RecallSemanticMemoryFact> {
+        const { scope, ...factInput } = input;
+        const fact = await dependencies.semanticStore.create(scope, factInput);
+        await dependencies.vectorStore.index(fact);
+        if (factInput.supersedesMemoryId) {
+          await dependencies.vectorStore.updateStatus(factInput.supersedesMemoryId, "superseded");
+        }
+        return toPublicFact(fact);
       },
       async extractAndSave(scope, sourceConversationId, messages): Promise<RecallAutomaticSemanticMemoryResult> {
         return toPublicAutomaticResult(
@@ -305,7 +321,7 @@ function toPublicPreparedTurn(prepared: PreparedConversationTurn): RecallPrepare
   };
 }
 
-function toPublicCompactionResult(result: ContextCompactionResult): RecallPreparedTurn["prompt"] {
+function toPublicCompactionResult(result: ContextCompactionResult): RecallContextCompactionResult {
   return {
     messages: result.messages.map(({ role, content }) => ({ role, content })),
     tokenCount: result.tokenCount,
@@ -317,7 +333,6 @@ function toPublicCompactionResult(result: ContextCompactionResult): RecallPrepar
     ...(result.summaryThroughSequenceNo === undefined
       ? {}
       : { summaryThroughSequenceNo: result.summaryThroughSequenceNo }),
-    semanticMemories: [],
   };
 }
 

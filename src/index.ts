@@ -1,5 +1,6 @@
 export { connectRecallEngine, RecallEngineConnectionError } from "./recall-engine.js";
 export {
+  ConversationPromptPreparationError,
   ConversationTurnOrderError,
   PreparedConversationTurnError,
 } from "./conversation-turn-memory.js";
@@ -29,6 +30,7 @@ export type {
   RecallSemanticFactCandidate,
   RecallSemanticMemoryCategory,
   RecallSemanticMemoryFact,
+  RecallSemanticMemoryFactInput,
   RecallSemanticMemoryOutcome,
   RecallSemanticMemoryRetrievalOptions,
   RecallSemanticMemoryScope,

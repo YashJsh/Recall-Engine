@@ -1,11 +1,15 @@
 import { MessageRole } from "./generated/prisma/enums.js";
 import type { ConversationPromptBuildResult, ConversationPromptBuilder } from "./conversation-prompt-builder.js";
-import type { ConversationScope, EpisodicMemory } from "./episodic-memory.js";
+import {
+  ConversationTurnOrderError,
+  type ConversationScope,
+  type EpisodicMemory,
+} from "./episodic-memory.js";
 import type { AutomaticSemanticMemoryResult } from "./semantic-memory-extraction-service.js";
 import type { ExtractionMessage } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
 
-export { ConversationTurnOrderError } from "./episodic-memory.js";
+export { ConversationTurnOrderError };
 
 const EXTRACTION_CONTEXT_LIMIT = 8;
 
@@ -35,6 +39,20 @@ export class PreparedConversationTurnError extends Error {
   }
 }
 
+export class ConversationPromptPreparationError extends Error {
+  constructor(
+    readonly persistedUserMessageId: string,
+    readonly persistedUserMessageSequenceNo: number,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "The user message was saved, but prompt preparation failed; retry with its persisted message ID to avoid duplicating it",
+      options,
+    );
+    this.name = "ConversationPromptPreparationError";
+  }
+}
+
 export interface SemanticMemoryTurnExtractor {
   extractAndSave(
     scope: SemanticMemoryScope,
@@ -56,15 +74,39 @@ export class ConversationTurnMemoryService {
     conversationId: string,
     systemPrompt: string,
     userContent: string,
+    resumeUserMessageId?: string,
   ): Promise<PreparedConversationTurn> {
     if (!systemPrompt.trim()) throw new Error("systemPrompt must not be empty");
     if (!userContent.trim()) throw new Error("userContent must not be empty");
 
-    const userMessage = await this.episodicMemory.appendMessage(scope, conversationId, {
-      role: MessageRole.user,
-      content: userContent,
-    });
-    const prompt = await this.promptBuilder.build(scope, conversationId, systemPrompt, userMessage.content);
+    let userMessage: PersistedMessage;
+    if (resumeUserMessageId !== undefined) {
+      if (!resumeUserMessageId.trim()) throw new PreparedConversationTurnError();
+      const persisted = await this.episodicMemory.getMessageById(scope, conversationId, resumeUserMessageId);
+      if (!persisted
+        || persisted.role !== MessageRole.user
+        || persisted.content !== userContent) {
+        throw new PreparedConversationTurnError();
+      }
+      const laterMessages = await this.episodicMemory.listMessages(scope, conversationId, {
+        afterSequenceNo: persisted.sequenceNo,
+        limit: 1,
+      });
+      if (laterMessages.length > 0) throw new ConversationTurnOrderError();
+      userMessage = persisted;
+    } else {
+      userMessage = await this.episodicMemory.appendMessage(scope, conversationId, {
+        role: MessageRole.user,
+        content: userContent,
+      });
+    }
+
+    let prompt: ConversationPromptBuildResult;
+    try {
+      prompt = await this.promptBuilder.build(scope, conversationId, systemPrompt, userMessage.content);
+    } catch (error) {
+      throw new ConversationPromptPreparationError(userMessage.id, userMessage.sequenceNo, { cause: error });
+    }
 
     return {
       conversationId,
