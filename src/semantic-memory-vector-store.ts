@@ -82,6 +82,11 @@ export class SemanticMemoryVectorStore {
     this.embedder = options.embedder ?? new FastEmbedTextEmbedder();
   }
 
+  /** Checks Qdrant availability without creating or changing the configured collection. */
+  async checkConnection(): Promise<void> {
+    await this.client.collectionExists(this.collectionName);
+  }
+
   async index(memory: SemanticMemoryVectorInput): Promise<void> {
     await this.ensureCollection();
     const vector = await this.embedder.embedPassage(memory.content);
