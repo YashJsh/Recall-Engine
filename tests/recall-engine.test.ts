@@ -6,6 +6,7 @@ import { createPostgresClient } from "../src/postgres-client.js";
 import {
   connectRecallEngine,
   ConversationPromptPreparationError,
+  ConversationTurnOrderError,
   RecallEngineConnectionError,
 } from "../src/index.js";
 
@@ -219,6 +220,23 @@ describe("Recall Engine public API", () => {
       assert.equal(resumed.userMessage.id, preparationError.persistedUserMessageId);
       assert.equal(messages.length, 1);
       assert.equal(messages[0]?.content, longMessage);
+
+      await recoveryEngine.conversations.prepareTurn({
+        scope,
+        conversationId,
+        systemPrompt: "Answer clearly.",
+        userMessage: "A later turn arrived.",
+      });
+      await assert.rejects(
+        recoveryEngine.conversations.prepareTurn({
+          scope,
+          conversationId,
+          systemPrompt: "Answer clearly.",
+          userMessage: longMessage,
+          resumeUserMessageId: preparationError.persistedUserMessageId,
+        }),
+        ConversationTurnOrderError,
+      );
     } finally {
       await recoveryEngine.close();
       await prisma.tenant.delete({ where: { id: tenant.id } });

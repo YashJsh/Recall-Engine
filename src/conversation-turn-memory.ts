@@ -88,11 +88,7 @@ export class ConversationTurnMemoryService {
         || persisted.content !== userContent) {
         throw new PreparedConversationTurnError();
       }
-      const laterMessages = await this.episodicMemory.listMessages(scope, conversationId, {
-        afterSequenceNo: persisted.sequenceNo,
-        limit: 1,
-      });
-      if (laterMessages.length > 0) throw new ConversationTurnOrderError();
+      await this.assertNoLaterMessages(scope, conversationId, persisted.sequenceNo);
       userMessage = persisted;
     } else {
       userMessage = await this.episodicMemory.appendMessage(scope, conversationId, {
@@ -106,6 +102,9 @@ export class ConversationTurnMemoryService {
       prompt = await this.promptBuilder.build(scope, conversationId, systemPrompt, userMessage.content);
     } catch (error) {
       throw new ConversationPromptPreparationError(userMessage.id, userMessage.sequenceNo, { cause: error });
+    }
+    if (resumeUserMessageId !== undefined) {
+      await this.assertNoLaterMessages(scope, conversationId, userMessage.sequenceNo);
     }
 
     return {
@@ -187,5 +186,17 @@ export class ConversationTurnMemoryService {
       throw new PreparedConversationTurnError();
     }
     return extractionMessages;
+  }
+
+  private async assertNoLaterMessages(
+    scope: ConversationScope,
+    conversationId: string,
+    sequenceNo: number,
+  ): Promise<void> {
+    const laterMessages = await this.episodicMemory.listMessages(scope, conversationId, {
+      afterSequenceNo: sequenceNo,
+      limit: 1,
+    });
+    if (laterMessages.length > 0) throw new ConversationTurnOrderError();
   }
 }
