@@ -17,6 +17,11 @@ type PersistedMessage = NonNullable<
   Awaited<ReturnType<EpisodicMemory["getMessageById"]>>
 >;
 
+type PreparedTurnReference = {
+  conversationId: string;
+  userMessage: Pick<PersistedMessage, "id" | "sequenceNo" | "content">;
+};
+
 export interface PreparedConversationTurn {
   conversationId: string;
   userMessage: Pick<PersistedMessage, "id" | "sequenceNo" | "role" | "content">;
@@ -121,7 +126,7 @@ export class ConversationTurnMemoryService {
 
   async completeTurn(
     scope: ConversationScope,
-    preparedTurn: PreparedConversationTurn,
+    preparedTurn: PreparedTurnReference,
     assistantContent: string,
   ): Promise<CompletedConversationTurn> {
     if (!assistantContent.trim()) throw new Error("assistantContent must not be empty");

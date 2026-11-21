@@ -12,7 +12,6 @@ import {
 import {
   EpisodicMemory,
   type ConversationScope,
-  type ListMessagesOptions,
 } from "./episodic-memory.js";
 import { createPostgresClient } from "./postgres-client.js";
 import { connectRedis } from "./redis-client.js";
@@ -26,7 +25,7 @@ import { SemanticMemoryStore, type SemanticMemoryRecord } from "./semantic-memor
 import { SemanticMemoryVectorStore } from "./semantic-memory-vector-store.js";
 import { ConversationSummaryService, type SummaryGenerationInput, type SummaryGenerator } from "./summary-service.js";
 import { GroqSummaryGenerator } from "./providers/groq-summary-generator.js";
-import { RedisWorkingMemory, type WorkingMemoryItem, type WorkingMemoryOptions } from "./working-memory.js";
+import { RedisWorkingMemory, type WorkingMemoryOptions } from "./working-memory.js";
 import type {
   RecallContextCompactionResult,
   RecallAutomaticSemanticMemoryResult,
@@ -143,7 +142,7 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
       async completeTurn(input): Promise<RecallCompletedTurn> {
         const result = await dependencies.turnService.completeTurn(
           input.scope,
-          input.preparedTurn as PreparedConversationTurn,
+          input.preparedTurn,
           input.assistantContent,
         );
         return {
@@ -160,7 +159,7 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
         return (await dependencies.episodicMemory.listMessages(
           scope,
           conversationId,
-          options as ListMessagesOptions | undefined,
+          options,
         )).map(toPublicMessage);
       },
       async getLatestSummary(scope, conversationId): Promise<RecallConversationSummary | null> {
@@ -173,7 +172,7 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
     },
     workingMemory: {
       addItem(scope: RecallMemoryScope, item: RecallWorkingMemoryItem) {
-        return dependencies.workingMemory.addItem(scope, item as WorkingMemoryItem);
+        return dependencies.workingMemory.addItem(scope, item);
       },
       getItems(scope: RecallMemoryScope) {
         return dependencies.workingMemory.getItems(scope);
