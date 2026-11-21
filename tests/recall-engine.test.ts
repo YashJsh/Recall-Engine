@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
+import { createClient } from "redis";
 import { createPostgresClient } from "../src/postgres-client.js";
 import {
   connectRecallEngine,
@@ -9,6 +10,26 @@ import {
 } from "../src/index.js";
 
 const prisma = createPostgresClient();
+
+async function countRecallEngineRedisConnections(): Promise<number> {
+  const client = createClient({ url: process.env.REDIS_URL ?? "redis://127.0.0.1:6379" });
+  await client.connect();
+  try {
+    const listing = String(await client.sendCommand(["CLIENT", "LIST"]));
+    return listing.split("\n").filter((entry) => entry.includes("name=recall-engine")).length;
+  } finally {
+    await client.quit();
+  }
+}
+
+async function countRecallEnginePostgresConnections(): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM pg_stat_activity
+    WHERE application_name = 'recall-engine'
+  `;
+  return Number(rows[0]?.count ?? 0);
+}
 
 before(async () => {
   await prisma.$connect();
@@ -125,12 +146,35 @@ describe("Recall Engine public API", () => {
   });
 
   it("checks required storage services before returning an engine", async () => {
+    assert.equal(await countRecallEngineRedisConnections(), 0);
+    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    await assert.rejects(
+      connectRecallEngine({ databaseUrl: "postgresql://recall:bad@127.0.0.1:1/recall_engine" }),
+      RecallEngineConnectionError,
+    );
+    assert.equal(await countRecallEngineRedisConnections(), 0);
+    assert.equal(await countRecallEnginePostgresConnections(), 0);
+
+    await assert.rejects(
+      connectRecallEngine({ redisUrl: "redis://127.0.0.1:1" }),
+      RecallEngineConnectionError,
+    );
+    assert.equal(await countRecallEngineRedisConnections(), 0);
+    assert.equal(await countRecallEnginePostgresConnections(), 0);
+
     await assert.rejects(
       connectRecallEngine({ qdrantUrl: "http://127.0.0.1:1" }),
       RecallEngineConnectionError,
     );
+    assert.equal(await countRecallEngineRedisConnections(), 0);
+    assert.equal(await countRecallEnginePostgresConnections(), 0);
+
     const recovered = await connectRecallEngine();
+    assert.equal(await countRecallEngineRedisConnections(), 1);
+    assert.equal(await countRecallEnginePostgresConnections(), 1);
     await recovered.close();
+    assert.equal(await countRecallEngineRedisConnections(), 0);
+    assert.equal(await countRecallEnginePostgresConnections(), 0);
   });
 
   it("resumes prompt preparation from its persisted user message without duplicating it", async () => {

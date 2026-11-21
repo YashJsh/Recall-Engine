@@ -49,6 +49,7 @@ import type {
 const DEFAULT_CONTEXT_INPUT_TOKEN_BUDGET = 12_000;
 const DEFAULT_WORKING_MEMORY_TOKEN_BUDGET = 4_000;
 const DEFAULT_WORKING_MEMORY_SESSION_TTL_MS = 30 * 60 * 1000;
+const CLIENT_NAME = "recall-engine";
 
 export class RecallEngineConnectionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -60,12 +61,13 @@ export class RecallEngineConnectionError extends Error {
 /** Connects all memory stores and returns the supported consumer-facing API. */
 export async function connectRecallEngine(options: RecallEngineOptions = {}): Promise<RecallEngine> {
   const config = readOptions(options);
-  const prisma = createPostgresClient(options.databaseUrl);
+  const prisma = createPostgresClient(options.databaseUrl, CLIENT_NAME);
   let redis: Awaited<ReturnType<typeof connectRedis>> | undefined;
 
   try {
     await prisma.$connect();
-    redis = await connectRedis(options.redisUrl);
+    await prisma.$queryRaw`SELECT 1`;
+    redis = await connectRedis(options.redisUrl, CLIENT_NAME);
 
     const episodicMemory = new EpisodicMemory(prisma);
     const semanticStore = new SemanticMemoryStore(prisma);
