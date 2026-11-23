@@ -1,4 +1,4 @@
-import { createClient } from "redis";
+import { createClient, type RedisClientType } from "redis";
 
 const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379";
 
@@ -6,7 +6,7 @@ const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379";
 export async function connectRedis(
   url = process.env.REDIS_URL ?? DEFAULT_REDIS_URL,
   clientName?: string,
-) {
+): Promise<RedisClientType> {
   let hasConnectedOnce = false;
   const client = createClient({
     url,
@@ -28,7 +28,7 @@ export async function connectRedis(
     await client.connect();
     hasConnectedOnce = true;
     if (clientName) await client.clientSetName(clientName);
-    return client;
+    return client as RedisClientType;
   } catch (error) {
     client.destroy();
     throw error;
