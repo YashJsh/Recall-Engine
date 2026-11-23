@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDemoScope } from "@/lib/demo-identity";
-import { readDemoState, updateDemoState } from "@/lib/demo-state";
+import { activateConversation, readDemoState } from "@/lib/demo-state";
 import { getRecallEngine } from "@/lib/recall";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export async function GET() {
     let state = await readDemoState();
     if (!state.conversationId) {
       const conversation = await recall.conversations.create(scope, "Memory Lab conversation");
-      state = await updateDemoState((current) => ({ ...current, conversationId: conversation.id }));
+      state = await activateConversation(conversation.id);
     }
 
     const conversationId = state.conversationId!;
@@ -43,8 +43,21 @@ export async function GET() {
       }
     }
 
+    const conversations = await Promise.all(state.conversationIds.map(async (id) => {
+      const history = id === conversationId ? messages : await recall.conversations.listMessages(scope, id);
+      const firstUser = history.find((message) => message.role === "user");
+      const visible = history.filter((message) => message.role === "user" || message.role === "assistant");
+      return {
+        id,
+        title: firstUser?.content.slice(0, 80) ?? "New conversation",
+        messageCount: visible.length,
+        lastActivityAt: history.at(-1)?.createdAt ?? null,
+      };
+    }));
+
     return NextResponse.json({
       conversationId,
+      conversations: conversations.reverse(),
       messages,
       latestSummary,
       knownFacts,

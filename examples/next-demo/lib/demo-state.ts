@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 
 export interface DemoState {
   conversationId?: string;
+  /** Every conversation this demo has created, oldest first. */
+  conversationIds: string[];
   savedSemanticMemoryIds: string[];
 }
 
@@ -13,14 +15,21 @@ export async function readDemoState(): Promise<DemoState> {
   try {
     const serialized = await readFile(statePath, "utf8");
     const value = JSON.parse(serialized) as Partial<DemoState>;
+    const conversationIds = Array.isArray(value.conversationIds)
+      ? value.conversationIds.filter((id): id is string => typeof id === "string")
+      : [];
+    if (typeof value.conversationId === "string" && !conversationIds.includes(value.conversationId)) {
+      conversationIds.push(value.conversationId);
+    }
     return {
+      conversationIds,
       ...(typeof value.conversationId === "string" ? { conversationId: value.conversationId } : {}),
       savedSemanticMemoryIds: Array.isArray(value.savedSemanticMemoryIds)
         ? value.savedSemanticMemoryIds.filter((id): id is string => typeof id === "string")
         : [],
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { savedSemanticMemoryIds: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { conversationIds: [], savedSemanticMemoryIds: [] };
     throw error;
   }
 }
@@ -42,4 +51,15 @@ export async function updateDemoState(
   await operation;
   if (!updated) throw new Error("Demo state was not updated");
   return updated;
+}
+
+/** Makes a conversation active and remembers it in the demo's conversation list. */
+export function activateConversation(conversationId: string): Promise<DemoState> {
+  return updateDemoState((current) => ({
+    ...current,
+    conversationId,
+    conversationIds: current.conversationIds.includes(conversationId)
+      ? current.conversationIds
+      : [...current.conversationIds, conversationId],
+  }));
 }

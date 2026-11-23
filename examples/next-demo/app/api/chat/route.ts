@@ -1,7 +1,7 @@
 import { GroqHostModel } from "@/lib/agent";
 import { createChatPostHandler } from "@/lib/chat-handler";
 import { getDemoScope } from "@/lib/demo-identity";
-import { readDemoState, updateDemoState } from "@/lib/demo-state";
+import { activateConversation, readDemoState, updateDemoState } from "@/lib/demo-state";
 import { getRecallEngine } from "@/lib/recall";
 
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ export async function POST(request: Request): Promise<Response> {
         const state = await readDemoState();
         if (state.conversationId) return state.conversationId;
         const conversation = await recall.conversations.create(scope, "Memory Lab conversation");
-        await updateDemoState((current) => ({ ...current, conversationId: conversation.id }));
+        await activateConversation(conversation.id);
         return conversation.id;
       },
       onSavedFacts: async (ids) => {

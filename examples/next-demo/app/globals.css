@@ -5,8 +5,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
+    --font-heading: var(--font-serif);
     --font-sans: var(--font-sans);
+    --font-mono: var(--font-mono);
+    --font-serif: var(--font-serif);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -127,3 +129,10 @@
     @apply font-sans;
     }
 }
+/* Memory Lab refinements */
+::selection { background: oklch(0.92 0 0); }
+.scrollbar-none { scrollbar-width: none; }
+@keyframes lab-pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
+.lab-dot { animation: lab-pulse 1.2s ease-in-out infinite; }
+.lab-dot:nth-child(2) { animation-delay: .15s }
+.lab-dot:nth-child(3) { animation-delay: .3s }
