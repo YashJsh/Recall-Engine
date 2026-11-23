@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowUp, ChevronRight, MessageSquare, PanelRightClose, PanelRightOpen, Plus, ScanSearch } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -404,7 +406,7 @@ function ChatMessage({ role, content, selected, onInspect }: {
   }
   return (
     <div className={cn("group -mx-3 rounded-xl px-3 py-2 transition-colors", selected && "bg-neutral-50 ring-1 ring-neutral-200")}>
-      <p className="text-[15px] leading-7 break-words whitespace-pre-wrap text-neutral-800">{content}</p>
+      <Markdown className="text-[15px] leading-7">{content}</Markdown>
       {onInspect && (
         <button
           type="button"
@@ -417,6 +419,31 @@ function ChatMessage({ role, content, selected, onInspect }: {
           <ScanSearch className="size-3" /> {selected ? "Inspecting" : "Inspect memory"}
         </button>
       )}
+    </div>
+  );
+}
+
+function Markdown({ children, className }: { children: string; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "prose prose-neutral max-w-none break-words text-neutral-800",
+        "prose-p:my-2 prose-headings:font-serif prose-headings:font-normal prose-headings:tracking-tight",
+        "prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
+        "prose-a:text-neutral-900 prose-a:underline-offset-2 prose-strong:font-semibold",
+        "prose-code:rounded prose-code:bg-neutral-100 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:content-none prose-code:after:content-none",
+        "prose-pre:rounded-xl prose-pre:border prose-pre:border-neutral-200 prose-pre:bg-neutral-50 prose-pre:text-neutral-800 [&_pre_code]:bg-transparent [&_pre_code]:p-0",
+        "prose-table:text-sm prose-th:font-medium prose-blockquote:font-normal prose-blockquote:text-neutral-600",
+        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        className,
+      )}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -631,9 +658,9 @@ function MemoryPanel({ state }: { state: DemoState | null }) {
             <p className="mb-2 text-xs text-neutral-500">
               Messages 1–{state.latestSummary.throughSequenceNo} are summarized (v{state.latestSummary.version}); later ones are sent verbatim.
             </p>
-            <p className="rounded-xl border border-neutral-200/80 bg-neutral-50/60 px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap text-neutral-700">
-              {state.latestSummary.summaryText}
-            </p>
+            <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/60 px-4 py-3">
+              <Markdown className="prose-sm text-[13px]">{state.latestSummary.summaryText}</Markdown>
+            </div>
           </>
         ) : <Empty>No summary yet — the full transcript still fits in the context budget.</Empty>}
       </Section>
