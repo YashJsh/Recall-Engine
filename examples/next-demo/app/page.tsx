@@ -235,6 +235,7 @@ export default function Home() {
                   type="button"
                   disabled={busy && !active}
                   onClick={() => changeConversation(conversation.id)}
+                  title={conversation.title}
                   className={cn(
                     "group w-full rounded-lg px-3 py-2 text-left transition-colors disabled:opacity-60",
                     active ? "bg-white shadow-xs ring-1 ring-neutral-200" : "hover:bg-neutral-100",
@@ -381,7 +382,7 @@ export default function Home() {
               </TabsList>
             </div>
             <ScrollArea className="min-h-0 flex-1">
-              <div className="px-6 pb-10">
+              <div className="min-w-0 px-6 pb-10 [overflow-wrap:anywhere]">
                 <TabsContent value="turn"><TurnPanel trace={trace} /></TabsContent>
                 <TabsContent value="memory"><MemoryPanel state={state} /></TabsContent>
                 <TabsContent value="prompt"><PromptPanel trace={trace} /></TabsContent>
@@ -458,8 +459,8 @@ function Section({ title, aside, children }: { title: string; aside?: ReactNode;
   return (
     <section className="py-5">
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h3 className="font-serif text-[17px] leading-none text-neutral-900">{title}</h3>
-        {aside !== undefined && <span className="font-mono text-[11px] text-neutral-400">{aside}</span>}
+        <h3 className="shrink-0 font-serif text-[17px] leading-none text-neutral-900">{title}</h3>
+        {aside !== undefined && <span className="min-w-0 text-right font-mono text-[11px] text-neutral-400">{aside}</span>}
       </div>
       {children}
     </section>
