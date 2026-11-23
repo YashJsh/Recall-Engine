@@ -33,13 +33,18 @@ type DemoState = {
   conversationId: string;
   conversations: ConversationListItem[];
   messages: Message[];
+  savedFactCount: number;
+  contextInputTokenBudget: number;
+};
+
+type MemorySnapshot = {
+  messageCount: number;
   latestSummary: Summary;
   knownFacts: Fact[];
   sourceMessages: Array<Pick<Message, "id" | "content">>;
   workingMemoryItems: Note[];
   workingMemoryTokenUsage: number;
   workingMemoryTokenBudget: number;
-  contextInputTokenBudget: number;
 };
 
 type PromptMessage = { role: string; content?: unknown; tool_calls?: unknown };
@@ -253,8 +258,7 @@ export default function Home() {
           </nav>
         </ScrollArea>
         <div className="border-t border-neutral-200/80 px-5 py-4 text-[11px] text-neutral-500">
-          <div className="flex justify-between"><span>Durable facts</span><span className="font-mono text-neutral-800">{state?.knownFacts.length ?? 0}</span></div>
-          <div className="mt-1 flex justify-between"><span>Task notes</span><span className="font-mono text-neutral-800">{state?.workingMemoryItems.length ?? 0}</span></div>
+          <div className="flex justify-between"><span>Durable facts</span><span className="font-mono text-neutral-800">{state?.savedFactCount ?? 0}</span></div>
           <p className="mt-3 text-neutral-400">Facts carry across conversations. Notes are cleared when you switch.</p>
         </div>
       </aside>
@@ -384,7 +388,7 @@ export default function Home() {
             <ScrollArea className="min-h-0 flex-1">
               <div className="min-w-0 px-6 pb-10 [overflow-wrap:anywhere]">
                 <TabsContent value="turn"><TurnPanel trace={trace} /></TabsContent>
-                <TabsContent value="memory"><MemoryPanel state={state} /></TabsContent>
+                <TabsContent value="memory"><MemoryPanel conversationId={state?.conversationId} messageCount={state?.messages.length} /></TabsContent>
                 <TabsContent value="prompt"><PromptPanel trace={trace} /></TabsContent>
               </div>
             </ScrollArea>
@@ -632,7 +636,27 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-function MemoryPanel({ state }: { state: DemoState | null }) {
+/** Mounted only while the Memory tab is open, so memory stores are read on demand. */
+function MemoryPanel({ conversationId, messageCount }: { conversationId?: string; messageCount?: number }) {
+  const [state, setState] = useState<MemorySnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    let cancelled = false;
+    fetch("/api/memory", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json();
+        if (cancelled) return;
+        if (!response.ok) throw new Error(body.error ?? "Unable to load memory");
+        setError(null);
+        setState(body as MemorySnapshot);
+      })
+      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Unable to load memory"); });
+    return () => { cancelled = true; };
+  }, [conversationId, messageCount]);
+
+  if (error) return <Placeholder title="Memory unavailable">{error}</Placeholder>;
   if (!state) return <Placeholder title="Loading">Reading memory stores…</Placeholder>;
   const sources = new Map(state.sourceMessages.map((m) => [m.id, m.content]));
   const wmPercent = state.workingMemoryTokenBudget
@@ -655,7 +679,7 @@ function MemoryPanel({ state }: { state: DemoState | null }) {
         )}
       </Section>
 
-      <Section title="Episodic memory" aside={`postgres · ${state.messages.length} msgs`}>
+      <Section title="Episodic memory" aside={`postgres · ${state.messageCount} msgs`}>
         {state.latestSummary ? (
           <>
             <p className="mb-2 text-xs text-neutral-500">

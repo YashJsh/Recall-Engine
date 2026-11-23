@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { AutomaticSemanticMemoryService } from "../src/semantic-memory-extraction-service.js";
-import { SemanticMemoryCategory, MessageRole } from "../src/generated/prisma/enums.js";
+import { SemanticMemoryCategory, SemanticMemoryStatus, MessageRole } from "../src/generated/prisma/enums.js";
 import { ConversationPromptBuilder } from "../src/conversation-prompt-builder.js";
 import {
   ConversationTurnMemoryService,
@@ -13,7 +13,10 @@ import { ConversationContextCompactor, type ContextTokenCounter } from "../src/c
 import { EpisodicMemory, type ConversationScope } from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
 import type { ExtractionMessage, SemanticFactCandidate } from "../src/semantic-fact-extractor.js";
-import type { RetrievedSemanticMemory } from "../src/semantic-memory-retrieval.js";
+import {
+  SemanticMemoryRetrievalService,
+  type RetrievedSemanticMemory,
+} from "../src/semantic-memory-retrieval.js";
 import { SemanticMemoryStore } from "../src/semantic-memory.js";
 import { ConversationSummaryService } from "../src/summary-service.js";
 
@@ -68,6 +71,63 @@ after(async () => {
 });
 
 describe("ConversationTurnMemoryService", () => {
+  it("leaves facts below the relevance threshold out of the prepared prompt", async () => {
+    const owner = await createOwner("Relevance threshold test");
+    const relevantId = randomUUID();
+    const weakId = randomUUID();
+    const facts = new Map<string, string>([
+      [relevantId, "The user prefers Qdrant for semantic memory."],
+      [weakId, "The user owns a cat."],
+    ]);
+    const retrieval = new SemanticMemoryRetrievalService(
+      {
+        async getById(_scope, memoryId) {
+          const content = facts.get(memoryId);
+          return content === undefined ? null : {
+            id: memoryId,
+            content,
+            category: SemanticMemoryCategory.preference,
+            status: SemanticMemoryStatus.active,
+            sourceConversationId: randomUUID(),
+            sourceMessageId: randomUUID(),
+          };
+        },
+      },
+      {
+        async findSimilar() {
+          return [
+            { semanticMemoryId: relevantId, score: 0.82 },
+            { semanticMemoryId: weakId, score: 0.31 },
+          ];
+        },
+      },
+    );
+    const compactor = new ConversationContextCompactor(
+      episodicMemory,
+      new ConversationSummaryService(episodicMemory, {
+        async generate() {
+          throw new Error("The test prompt should not require summary generation");
+        },
+      }),
+      { inputTokenBudget: 10_000 },
+    );
+    const service = new ConversationTurnMemoryService(
+      episodicMemory,
+      new ConversationPromptBuilder(compactor, retrieval, { limit: 5, scoreThreshold: 0.5 }),
+      new AutomaticSemanticMemoryService({ async extract() { return []; } }, semanticMemoryStore),
+    );
+
+    try {
+      const conversation = await episodicMemory.createConversation(owner.scope);
+      const prepared = await service.prepareTurn(owner.scope, conversation.id, "System prompt", "Which vector database do I prefer?");
+
+      assert.deepEqual(prepared.prompt.semanticMemories.map(({ semanticMemoryId }) => semanticMemoryId), [relevantId]);
+      assert.ok(!prepared.prompt.messages[0]?.content.includes("owns a cat"));
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
   it("prepares context for a host model and persists its response before extracting facts", async () => {
     const owner = await createOwner("Conversation turn lifecycle test");
     const remembered: RetrievedSemanticMemory = {

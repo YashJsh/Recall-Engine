@@ -50,7 +50,8 @@ export class SemanticMemoryRetrievalService {
   ): Promise<RetrievedSemanticMemory[]> {
     if (!queryText.trim()) throw new Error("queryText must not be empty");
 
-    const candidates = await this.vectorSearch.findSimilar(scope, queryText, options);
+    const candidates = (await this.vectorSearch.findSimilar(scope, queryText, options))
+      .filter(({ score }) => options.scoreThreshold === undefined || score >= options.scoreThreshold);
     const verified = await Promise.all(candidates.map(async ({ semanticMemoryId, score }) => {
       const fact = await this.factReader.getById(scope, semanticMemoryId);
       if (!fact || fact.status !== SemanticMemoryStatus.active) return null;

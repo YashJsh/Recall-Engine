@@ -6,11 +6,16 @@ import type { ConversationScope } from "./episodic-memory.js";
 import {
   formatSemanticMemoryPromptContext,
   type RetrievedSemanticMemory,
+  type SemanticMemoryRetrievalOptions,
 } from "./semantic-memory-retrieval.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
 
 export interface SemanticMemoryRetriever {
-  retrieve(scope: SemanticMemoryScope, queryText: string): Promise<RetrievedSemanticMemory[]>;
+  retrieve(
+    scope: SemanticMemoryScope,
+    queryText: string,
+    options?: SemanticMemoryRetrievalOptions,
+  ): Promise<RetrievedSemanticMemory[]>;
 }
 
 export interface ConversationPromptBuildResult extends ContextCompactionResult {
@@ -22,6 +27,8 @@ export class ConversationPromptBuilder {
   constructor(
     private readonly contextCompactor: ConversationContextCompactor,
     private readonly semanticMemoryRetriever: SemanticMemoryRetriever,
+    /** Top-N limit and minimum relevance score for facts added to the prompt. */
+    private readonly retrievalOptions: SemanticMemoryRetrievalOptions = {},
   ) {}
 
   async build(
@@ -36,7 +43,11 @@ export class ConversationPromptBuilder {
       tenantId: scope.tenantId,
       userId: scope.userId,
     };
-    const semanticMemories = await this.semanticMemoryRetriever.retrieve(memoryScope, currentUserMessage);
+    const semanticMemories = await this.semanticMemoryRetriever.retrieve(
+      memoryScope,
+      currentUserMessage,
+      this.retrievalOptions,
+    );
     const memoryContext = formatSemanticMemoryPromptContext(semanticMemories);
     const augmentedSystemPrompt = memoryContext
       ? `${systemPrompt}\n\n${memoryContext}`

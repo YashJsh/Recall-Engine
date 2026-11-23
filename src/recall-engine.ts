@@ -49,6 +49,8 @@ import type {
 const DEFAULT_CONTEXT_INPUT_TOKEN_BUDGET = 12_000;
 const DEFAULT_WORKING_MEMORY_TOKEN_BUDGET = 4_000;
 const DEFAULT_WORKING_MEMORY_SESSION_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_SEMANTIC_MEMORY_TOP_K = 5;
+const DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD = 0.5;
 const CLIENT_NAME = "recall-engine";
 
 export class RecallEngineConnectionError extends Error {
@@ -88,7 +90,7 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
       summaryService,
       { inputTokenBudget: config.contextInputTokenBudget },
     );
-    const promptBuilder = new ConversationPromptBuilder(compactor, retrieval);
+    const promptBuilder = new ConversationPromptBuilder(compactor, retrieval, config.semanticRetrieval);
     const turnService = new ConversationTurnMemoryService(episodicMemory, promptBuilder, automaticMemory);
     const workingMemory = new RedisWorkingMemory(redis, config.workingMemory);
 
@@ -258,6 +260,7 @@ class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor 
 function readOptions(options: RecallEngineOptions): {
   contextInputTokenBudget: number;
   workingMemory: WorkingMemoryOptions;
+  semanticRetrieval: { limit: number; scoreThreshold: number };
 } {
   return {
     contextInputTokenBudget: positiveIntegerOption(
@@ -277,7 +280,28 @@ function readOptions(options: RecallEngineOptions): {
         DEFAULT_WORKING_MEMORY_SESSION_TTL_MS,
       ),
     },
+    semanticRetrieval: {
+      limit: positiveIntegerOption(
+        options.semanticMemoryTopK,
+        "RECALL_SEMANTIC_MEMORY_TOP_K",
+        DEFAULT_SEMANTIC_MEMORY_TOP_K,
+      ),
+      scoreThreshold: scoreOption(
+        options.semanticMemoryScoreThreshold,
+        "RECALL_SEMANTIC_MEMORY_SCORE_THRESHOLD",
+        DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD,
+      ),
+    },
   };
+}
+
+function scoreOption(value: number | undefined, environmentName: string, fallback: number): number {
+  const configured = process.env[environmentName];
+  const resolved = value ?? (configured === undefined || configured === "" ? fallback : Number(configured));
+  if (!Number.isFinite(resolved) || resolved < 0 || resolved > 1) {
+    throw new Error(`${environmentName} must be a number between 0 and 1`);
+  }
+  return resolved;
 }
 
 function positiveIntegerOption(value: number | undefined, environmentName: string, fallback: number): number {

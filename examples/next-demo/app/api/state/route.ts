@@ -16,33 +16,13 @@ export async function GET() {
     }
 
     const conversationId = state.conversationId!;
-    const [messages, latestSummary, workingMemoryItems, workingMemoryTokenUsage, facts] = await Promise.all([
+    // Transcript and conversation list only. Memory contents load from /api/memory when the
+    // Memory tab is opened; each turn's recalled facts come from that turn's semantic search.
+    const [messages, conversationOverviews] = await Promise.all([
       recall.conversations.listMessages(scope, conversationId),
-      recall.conversations.getLatestSummary(scope, conversationId),
-      recall.workingMemory.getItems(scope),
-      recall.workingMemory.getTokenUsage(scope),
-      Promise.all(state.savedSemanticMemoryIds.map((id) => recall.semanticMemory.getById(
-        { tenantId: scope.tenantId, userId: scope.userId },
-        id,
-      ))),
+      recall.conversations.list(scope),
     ]);
-
-    const knownFacts = facts.filter((fact) => fact !== null);
-    const sourceMessages = new Map<string, { id: string; conversationId: string; content: string; role: string }>();
-    for (const fact of knownFacts) {
-      if (sourceMessages.has(fact.sourceMessageId)) continue;
-      const sourceMessage = await recall.conversations.getMessage(scope, fact.sourceConversationId, fact.sourceMessageId);
-      if (sourceMessage) {
-        sourceMessages.set(sourceMessage.id, {
-          id: sourceMessage.id,
-          conversationId: sourceMessage.conversationId,
-          content: sourceMessage.content,
-          role: sourceMessage.role,
-        });
-      }
-    }
-
-    const conversations = (await recall.conversations.list(scope)).map((conversation) => ({
+    const conversations = conversationOverviews.map((conversation) => ({
       id: conversation.id,
       title: conversation.preview?.slice(0, 80) ?? "New conversation",
       messageCount: conversation.messageCount,
@@ -53,12 +33,7 @@ export async function GET() {
       conversationId,
       conversations,
       messages,
-      latestSummary,
-      knownFacts,
-      sourceMessages: [...sourceMessages.values()],
-      workingMemoryItems,
-      workingMemoryTokenUsage,
-      workingMemoryTokenBudget: Number(process.env.RECALL_WORKING_MEMORY_TOKEN_BUDGET ?? 4_000),
+      savedFactCount: state.savedSemanticMemoryIds.length,
       contextInputTokenBudget: Number(process.env.DEMO_CONTEXT_INPUT_TOKEN_BUDGET ?? 12_000),
     });
   } catch (error) {

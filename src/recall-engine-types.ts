@@ -185,6 +185,13 @@ export interface RecallEngineOptions {
   workingMemoryTokenBudget?: number;
   /** Working-memory session TTL. Defaults to RECALL_WORKING_MEMORY_SESSION_TTL_MS or 1800000. */
   workingMemorySessionTtlMs?: number;
+  /** Max facts recalled into each turn's prompt. Defaults to RECALL_SEMANTIC_MEMORY_TOP_K or 5. */
+  semanticMemoryTopK?: number;
+  /**
+   * Minimum relevance score (cosine similarity, 0–1) for a fact to enter the prompt.
+   * Defaults to RECALL_SEMANTIC_MEMORY_SCORE_THRESHOLD or 0.5.
+   */
+  semanticMemoryScoreThreshold?: number;
 }
 
 export interface RecallSemanticMemoryRetrievalOptions {
