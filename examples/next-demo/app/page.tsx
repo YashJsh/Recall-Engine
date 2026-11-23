@@ -37,15 +37,6 @@ type DemoState = {
   contextInputTokenBudget: number;
 };
 
-type MemorySnapshot = {
-  messageCount: number;
-  latestSummary: Summary;
-  knownFacts: Fact[];
-  sourceMessages: Array<Pick<Message, "id" | "content">>;
-  workingMemoryItems: Note[];
-  workingMemoryTokenUsage: number;
-  workingMemoryTokenBudget: number;
-};
 
 type PromptMessage = { role: string; content?: unknown; tool_calls?: unknown };
 type RetrievedMemory = {
@@ -388,7 +379,7 @@ export default function Home() {
             <ScrollArea className="min-h-0 flex-1">
               <div className="min-w-0 px-6 pb-10 [overflow-wrap:anywhere]">
                 <TabsContent value="turn"><TurnPanel trace={trace} /></TabsContent>
-                <TabsContent value="memory"><MemoryPanel conversationId={state?.conversationId} messageCount={state?.messages.length} /></TabsContent>
+                <TabsContent value="memory"><MemoryPanel conversationId={state?.conversationId} messageCount={state?.messages.length} factCount={state?.savedFactCount} /></TabsContent>
                 <TabsContent value="prompt"><PromptPanel trace={trace} /></TabsContent>
               </div>
             </ScrollArea>
@@ -636,78 +627,181 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-/** Mounted only while the Memory tab is open, so memory stores are read on demand. */
-function MemoryPanel({ conversationId, messageCount }: { conversationId?: string; messageCount?: number }) {
-  const [state, setState] = useState<MemorySnapshot | null>(null);
+type MemoryLayer = "working" | "episodic" | "semantic";
+type SummaryVersion = NonNullable<Summary> & { id: string; createdAt: string };
+type LayerData =
+  | { layer: "working"; items: Note[]; tokenUsage: number; tokenBudget: number }
+  | {
+    layer: "episodic";
+    messageCount: number;
+    userMessageCount: number;
+    assistantMessageCount: number;
+    latestSummary: SummaryVersion | null;
+    earlierSummaries: SummaryVersion[];
+  }
+  | { layer: "semantic"; facts: Fact[]; sourceMessages: Array<Pick<Message, "id" | "content">> };
+
+const MEMORY_LAYERS: MemoryLayer[] = ["working", "episodic", "semantic"];
+const MEMORY_LAYER_KEY = "memory-lab:memory-layer";
+const CATEGORIES: Category[] = ["preference", "profile", "project_fact"];
+
+/** Mounted only while the Memory tab is open; fetches just the selected layer. */
+function MemoryPanel({ conversationId, messageCount, factCount }: { conversationId?: string; messageCount?: number; factCount?: number }) {
+  const [layer, setLayer] = useState<MemoryLayer | null>(null);
+  const [data, setData] = useState<LayerData | null>(null);
+  const [noteCount, setNoteCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!conversationId) return;
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem(MEMORY_LAYER_KEY); } catch { /* storage unavailable */ }
+    setLayer(MEMORY_LAYERS.includes(stored as MemoryLayer) ? (stored as MemoryLayer) : "working");
+  }, []);
+
+  useEffect(() => {
+    if (!layer || !conversationId) return;
     let cancelled = false;
-    fetch("/api/memory", { cache: "no-store" })
+    setData(null);
+    setError(null);
+    fetch(`/api/memory?layer=${layer}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(body.error ?? "Unable to load memory");
-        setError(null);
-        setState(body as MemorySnapshot);
+        const loaded = body as LayerData;
+        if (loaded.layer === "working") setNoteCount(loaded.items.length);
+        setData(loaded);
       })
       .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Unable to load memory"); });
     return () => { cancelled = true; };
-  }, [conversationId, messageCount]);
+  }, [layer, conversationId, messageCount]);
 
-  if (error) return <Placeholder title="Memory unavailable">{error}</Placeholder>;
-  if (!state) return <Placeholder title="Loading">Reading memory stores…</Placeholder>;
-  const sources = new Map(state.sourceMessages.map((m) => [m.id, m.content]));
-  const wmPercent = state.workingMemoryTokenBudget
-    ? Math.min(100, (state.workingMemoryTokenUsage / state.workingMemoryTokenBudget) * 100)
-    : 0;
+  function select(next: string) {
+    setLayer(next as MemoryLayer);
+    try { window.localStorage.setItem(MEMORY_LAYER_KEY, next); } catch { /* storage unavailable */ }
+  }
+
+  if (!layer) return <Placeholder title="Loading">Reading memory stores…</Placeholder>;
+  const counts: Record<MemoryLayer, number | null> = {
+    working: noteCount,
+    episodic: messageCount ?? null,
+    semantic: factCount ?? null,
+  };
 
   return (
-    <div className="divide-y divide-neutral-100">
-      <Section title="Working memory" aside="redis">
-        <div className="mb-3 flex items-center gap-3">
-          <Progress value={wmPercent} className="h-1 flex-1 bg-neutral-100 [&>*]:bg-neutral-800" />
-          <span className="font-mono text-[11px] text-neutral-400">{state.workingMemoryTokenUsage} / {state.workingMemoryTokenBudget} tok</span>
-        </div>
-        {state.workingMemoryItems.length === 0 ? <Empty>No task notes for this conversation.</Empty> : (
-          <ul>
-            {state.workingMemoryItems.map((note) => (
-              <Row key={note.id} main={note.content} side={<span className="font-mono text-[11px] text-neutral-400">{note.tokenCount} tok</span>} />
-            ))}
-          </ul>
-        )}
-      </Section>
+    <Tabs value={layer} onValueChange={select} className="gap-0">
+      <TabsList variant="line" className="mt-4 h-auto gap-4 p-0">
+        {MEMORY_LAYERS.map((value) => (
+          <TabsTrigger key={value} value={value} className="px-0 capitalize">
+            {value}{counts[value] !== null && <Count>{counts[value]}</Count>}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {error ? <Placeholder title="Memory unavailable">{error}</Placeholder>
+        : !data || data.layer !== layer ? <Placeholder title="Loading">Reading {layer} memory…</Placeholder>
+        : data.layer === "working" ? <WorkingLayer data={data} />
+        : data.layer === "episodic" ? <EpisodicLayer data={data} />
+        : <SemanticLayer data={data} />}
+    </Tabs>
+  );
+}
 
-      <Section title="Episodic memory" aside={`postgres · ${state.messageCount} msgs`}>
-        {state.latestSummary ? (
+function WorkingLayer({ data }: { data: Extract<LayerData, { layer: "working" }> }) {
+  const percent = data.tokenBudget ? Math.min(100, (data.tokenUsage / data.tokenBudget) * 100) : 0;
+  return (
+    <Section title="Working memory" aside="redis">
+      <div className="mb-3 flex items-center gap-3">
+        <Progress value={percent} className="h-1 flex-1 bg-neutral-100 [&>*]:bg-neutral-800" />
+        <span className="font-mono text-[11px] text-neutral-400">{data.tokenUsage} / {data.tokenBudget} tok</span>
+      </div>
+      {data.items.length === 0 ? <Empty>No task notes for this conversation.</Empty> : (
+        <ul>
+          {data.items.map((note) => (
+            <Row key={note.id} main={note.content} side={<span className="font-mono text-[11px] text-neutral-400">{note.tokenCount} tok</span>} />
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+function EpisodicLayer({ data }: { data: Extract<LayerData, { layer: "episodic" }> }) {
+  const summary = data.latestSummary;
+  return (
+    <>
+      <Section title="Episodic memory" aside={`postgres · ${data.messageCount} msgs`}>
+        {data.messageCount === 0 ? <Empty>No messages in this conversation yet.</Empty> : (
+          <dl className="mb-4 grid grid-cols-3 divide-x divide-neutral-100 rounded-xl border border-neutral-200/80">
+            <Stat label="Messages" value={data.messageCount} />
+            <Stat label="You" value={data.userMessageCount} />
+            <Stat label="Assistant" value={data.assistantMessageCount} />
+          </dl>
+        )}
+        {summary ? (
           <>
             <p className="mb-2 text-xs text-neutral-500">
-              Messages 1–{state.latestSummary.throughSequenceNo} are summarized (v{state.latestSummary.version}); later ones are sent verbatim.
+              Messages 1–{summary.throughSequenceNo} are summarized (v{summary.version}); later ones are sent verbatim.
             </p>
             <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/60 px-4 py-3">
-              <Markdown className="prose-sm text-[13px]">{state.latestSummary.summaryText}</Markdown>
+              <Markdown className="prose-sm text-[13px]">{summary.summaryText}</Markdown>
             </div>
           </>
-        ) : <Empty>No summary yet — the full transcript still fits in the context budget.</Empty>}
+        ) : data.messageCount > 0 && <Empty>No summary yet — the full transcript still fits in the context budget.</Empty>}
       </Section>
-
-      <Section title="Semantic memory" aside={`postgres + qdrant · ${state.knownFacts.length}`}>
-        {state.knownFacts.length === 0 ? <Empty>No durable facts yet. Facts persist across conversations.</Empty> : (
+      {data.earlierSummaries.length > 0 && (
+        <Section title="Earlier summaries" aside={data.earlierSummaries.length}>
           <ul>
-            {state.knownFacts.map((fact) => (
+            {data.earlierSummaries.map((version) => (
               <Row
-                key={fact.id}
-                dim={fact.status === "superseded"}
-                main={fact.content}
-                side={fact.status === "superseded" ? <Tag>superseded</Tag> : undefined}
-                sub={<><Tag>{fact.category.replace("_", " ")}</Tag><Source content={sources.get(fact.sourceMessageId)} /></>}
+                key={version.id}
+                dim
+                main={truncate(version.summaryText, 160)}
+                side={<Tag>v{version.version}</Tag>}
+                sub={<span>through message #{version.throughSequenceNo} · {timeAgo(version.createdAt)}</span>}
               />
             ))}
           </ul>
-        )}
-      </Section>
-    </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
+function SemanticLayer({ data }: { data: Extract<LayerData, { layer: "semantic" }> }) {
+  const [category, setCategory] = useState<Category | "all">("all");
+  const sources = new Map(data.sourceMessages.map((m) => [m.id, m.content]));
+  const facts = category === "all" ? data.facts : data.facts.filter((fact) => fact.category === category);
+  const active = data.facts.filter((fact) => fact.status !== "superseded").length;
+
+  return (
+    <Section title="Semantic memory" aside={`postgres + qdrant · ${active} active`}>
+      {data.facts.length === 0 ? <Empty>No durable facts yet. Facts persist across conversations.</Empty> : (
+        <>
+          <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
+            {(["all", ...CATEGORIES] as const).map((value) => (
+              <button key={value} type="button" onClick={() => setCategory(value)} aria-pressed={category === value}>
+                <Tag tone={category === value ? "solid" : "neutral"}>
+                  {value.replace("_", " ")} {value === "all" ? data.facts.length : data.facts.filter((f) => f.category === value).length}
+                </Tag>
+              </button>
+            ))}
+          </div>
+          {facts.length === 0 ? <Empty>No {category.replace("_", " ")} facts.</Empty> : (
+            <ul>
+              {facts.map((fact) => (
+                <Row
+                  key={fact.id}
+                  dim={fact.status === "superseded"}
+                  main={fact.content}
+                  side={<Tag tone={fact.status === "superseded" ? "neutral" : "solid"}>{fact.status}</Tag>}
+                  sub={<><Tag>{fact.category.replace("_", " ")}</Tag><Source content={sources.get(fact.sourceMessageId)} /></>}
+                />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Section>
   );
 }
 
