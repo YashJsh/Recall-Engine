@@ -4,3 +4,4 @@ node_modules/
 out/
 .test-dist/
 *.tsbuildinfo
+local_cache/

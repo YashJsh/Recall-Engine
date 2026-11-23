@@ -35,6 +35,16 @@ export interface ChatHandlerResponse {
   assistantMessage: RecallCompletedTurn["assistantMessage"];
   semanticMemory: RecallCompletedTurn["semanticMemory"];
   retrievedMemories: RecallRetrievedSemanticMemory[];
+  compaction: {
+    tokenCount: number;
+    inputTokenBudget: number;
+    compactionPerformed: boolean;
+    targetReached: boolean;
+    summaryBatches: number;
+    summaryVersion: number | null;
+    summaryThroughSequenceNo: number | null;
+  };
+  userMessageId: string;
   latestSummary: Awaited<ReturnType<ChatHandlerDependencies["recall"]["conversations"]["getLatestSummary"]>>;
   promptCalls: Array<{ messages: ChatCompletionMessageParam[] }>;
   toolTrace: Array<{ name: string; status: string; detail: string }>;
@@ -148,6 +158,16 @@ export function createChatPostHandler(dependencies: ChatHandlerDependencies) {
           sourceMessage: sourceMessages[index],
         })),
         latestSummary,
+        compaction: {
+          tokenCount: prepared.prompt.tokenCount,
+          inputTokenBudget: prepared.prompt.inputTokenBudget,
+          compactionPerformed: prepared.prompt.compactionPerformed,
+          targetReached: prepared.prompt.targetReached,
+          summaryBatches: prepared.prompt.summaryBatches,
+          summaryVersion: prepared.prompt.summaryVersion ?? null,
+          summaryThroughSequenceNo: prepared.prompt.summaryThroughSequenceNo ?? null,
+        },
+        userMessageId: prepared.userMessage.id,
         promptCalls,
         toolTrace,
         workingMemoryItems: currentWorkingMemoryItems,
