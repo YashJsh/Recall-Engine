@@ -18,6 +18,17 @@ export interface ListMessagesOptions {
   limit?: number;
 }
 
+export interface ConversationOverview {
+  id: string;
+  title: string | null;
+  startedAt: Date;
+  /** First user message, or null when the conversation has none. */
+  preview: string | null;
+  /** Number of user and assistant messages. */
+  messageCount: number;
+  lastMessageAt: Date | null;
+}
+
 export interface SaveSummaryInput {
   summaryText: string;
   throughSequenceNo: number;
@@ -118,6 +129,47 @@ export class EpisodicMemory {
         },
       });
     });
+  }
+
+  /**
+   * Lists the scope's conversations, most recent activity first. `messageCount` and `preview`
+   * cover only user/assistant messages; empty conversations sort by their start time.
+   */
+  async listConversations(scope: ConversationScope): Promise<ConversationOverview[]> {
+    this.validateScope(scope);
+    const visibleRoles = { role: { in: [MessageRole.user, MessageRole.assistant] } };
+    const conversations = await this.prisma.conversation.findMany({
+      where: { tenantId: scope.tenantId, userId: scope.userId, sessionId: scope.sessionId },
+      select: {
+        id: true,
+        title: true,
+        startedAt: true,
+        _count: { select: { messages: { where: visibleRoles } } },
+        messages: {
+          where: { role: MessageRole.user },
+          orderBy: { sequenceNo: "asc" },
+          take: 1,
+          select: { content: true },
+        },
+      },
+    });
+    const lastActivity = await this.prisma.conversationMessage.groupBy({
+      by: ["conversationId"],
+      where: { tenantId: scope.tenantId, conversationId: { in: conversations.map(({ id }) => id) } },
+      _max: { createdAt: true },
+    });
+    const lastMessageAt = new Map(lastActivity.map((row) => [row.conversationId, row._max.createdAt]));
+
+    return conversations
+      .map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        startedAt: conversation.startedAt,
+        preview: conversation.messages[0]?.content ?? null,
+        messageCount: conversation._count.messages,
+        lastMessageAt: lastMessageAt.get(conversation.id) ?? null,
+      }))
+      .sort((a, b) => (b.lastMessageAt ?? b.startedAt).getTime() - (a.lastMessageAt ?? a.startedAt).getTime());
   }
 
   listMessages(

@@ -25,6 +25,14 @@ export interface RecallConversation {
   startedAt: Date;
 }
 
+export interface RecallConversationOverview extends RecallConversation {
+  /** First user message, or null when the conversation has none. */
+  preview: string | null;
+  /** Number of user and assistant messages. */
+  messageCount: number;
+  lastMessageAt: Date | null;
+}
+
 export interface RecallConversationMessage {
   id: string;
   tenantId: string;
@@ -187,6 +195,8 @@ export interface RecallSemanticMemoryRetrievalOptions {
 export interface RecallEngine {
   conversations: {
     create(scope: RecallMemoryScope, title?: string): Promise<RecallConversation>;
+    /** The scope's conversations, most recent activity first. */
+    list(scope: RecallMemoryScope): Promise<RecallConversationOverview[]>;
     prepareTurn(input: PrepareTurnInput): Promise<RecallPreparedTurn>;
     completeTurn(input: CompleteTurnInput): Promise<RecallCompletedTurn>;
     listMessages(

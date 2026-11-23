@@ -16,6 +16,7 @@ export type {
   RecallCompletedTurn,
   RecallContextCompactionResult,
   RecallConversation,
+  RecallConversationOverview,
   RecallConversationMessage,
   RecallConversationSummary,
   RecallEngine,

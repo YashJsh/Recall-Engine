@@ -81,6 +81,36 @@ describe("EpisodicMemory", () => {
     }
   });
 
+  it("lists the owner's conversations by latest activity with preview and visible count", async () => {
+    const owner = await createOwner();
+    try {
+      const older = await memory.createConversation(owner.scope, "Older");
+      const empty = await memory.createConversation(owner.scope, "Empty");
+      const newer = await memory.createConversation(owner.scope, "Newer");
+      await memory.appendMessage(owner.scope, older.id, { role: MessageRole.system, content: "hidden" });
+      await memory.appendMessage(owner.scope, older.id, { role: MessageRole.user, content: "First older question" });
+      await memory.appendMessage(owner.scope, older.id, { role: MessageRole.assistant, content: "Older answer" });
+      await memory.appendMessage(owner.scope, newer.id, { role: MessageRole.user, content: "Newer question" });
+      await memory.createConversation({ ...owner.scope, sessionId: randomUUID() }).catch(() => undefined);
+
+      const listed = await memory.listConversations(owner.scope);
+
+      assert.deepEqual(listed.map(({ id }) => id), [newer.id, older.id, empty.id]);
+      const olderOverview = listed.find(({ id }) => id === older.id);
+      assert.equal(olderOverview?.title, "Older");
+      assert.equal(olderOverview?.preview, "First older question");
+      assert.equal(olderOverview?.messageCount, 2);
+      assert.ok(olderOverview?.lastMessageAt instanceof Date);
+      const emptyOverview = listed.find(({ id }) => id === empty.id);
+      assert.equal(emptyOverview?.preview, null);
+      assert.equal(emptyOverview?.messageCount, 0);
+      assert.equal(emptyOverview?.lastMessageAt, null);
+      assert.deepEqual(await memory.listConversations({ ...owner.scope, userId: randomUUID() }), []);
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
   it("looks up a message only within its conversation and owner scope", async () => {
     const owner = await createOwner();
     try {

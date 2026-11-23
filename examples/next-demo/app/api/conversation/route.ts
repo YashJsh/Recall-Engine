@@ -1,5 +1,5 @@
 import { getDemoScope } from "@/lib/demo-identity";
-import { activateConversation, readDemoState } from "@/lib/demo-state";
+import { activateConversation } from "@/lib/demo-state";
 import { getRecallEngine } from "@/lib/recall";
 
 export const runtime = "nodejs";
@@ -16,8 +16,8 @@ export async function POST(request: Request): Promise<Response> {
 
     let conversationId: string;
     if (typeof body.conversationId === "string") {
-      const state = await readDemoState();
-      if (!state.conversationIds.includes(body.conversationId)) {
+      const known = await recall.conversations.list(scope);
+      if (!known.some(({ id }) => id === body.conversationId)) {
         return Response.json({ error: "Unknown conversation." }, { status: 404 });
       }
       conversationId = body.conversationId;

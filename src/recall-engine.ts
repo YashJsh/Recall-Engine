@@ -31,6 +31,7 @@ import type {
   RecallAutomaticSemanticMemoryResult,
   RecallCompletedTurn,
   RecallConversation,
+  RecallConversationOverview,
   RecallConversationMessage,
   RecallConversationSummary,
   RecallEngine,
@@ -128,6 +129,9 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
     conversations: {
       async create(scope, title): Promise<RecallConversation> {
         return dependencies.episodicMemory.createConversation(scope, title);
+      },
+      async list(scope): Promise<RecallConversationOverview[]> {
+        return dependencies.episodicMemory.listConversations(scope);
       },
       async prepareTurn(input): Promise<RecallPreparedTurn> {
         const prepared = await dependencies.turnService.prepareTurn(
