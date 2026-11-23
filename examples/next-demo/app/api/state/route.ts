@@ -31,8 +31,7 @@ export async function GET() {
     const sourceMessages = new Map<string, { id: string; conversationId: string; content: string; role: string }>();
     for (const fact of knownFacts) {
       if (sourceMessages.has(fact.sourceMessageId)) continue;
-      const source = await recall.conversations.listMessages(scope, fact.sourceConversationId);
-      const sourceMessage = source.find((message) => message.id === fact.sourceMessageId);
+      const sourceMessage = await recall.conversations.getMessage(scope, fact.sourceConversationId, fact.sourceMessageId);
       if (sourceMessage) {
         sourceMessages.set(sourceMessage.id, {
           id: sourceMessage.id,

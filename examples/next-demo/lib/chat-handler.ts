@@ -136,13 +136,12 @@ export function createChatPostHandler(dependencies: ChatHandlerDependencies) {
           .catch(() => undefined);
       }
 
-      const sourceMessages = await Promise.all(prepared.prompt.semanticMemories.map(async (memory) => {
-        const messages = await dependencies.recall.conversations.listMessages(
+      const sourceMessages = await Promise.all(prepared.prompt.semanticMemories.map((memory) =>
+        dependencies.recall.conversations.getMessage(
           dependencies.scope,
           memory.sourceConversationId,
-        );
-        return messages.find(({ id }) => id === memory.sourceMessageId) ?? null;
-      }));
+          memory.sourceMessageId,
+        )));
       const latestSummary = await dependencies.recall.conversations.getLatestSummary(
         dependencies.scope,
         conversationId,

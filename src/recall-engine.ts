@@ -166,6 +166,10 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
           options,
         )).map(toPublicMessage);
       },
+      async getMessage(scope, conversationId, messageId): Promise<RecallConversationMessage | null> {
+        const message = await dependencies.episodicMemory.getMessageById(scope, conversationId, messageId);
+        return message ? toPublicMessage(message) : null;
+      },
       async getLatestSummary(scope, conversationId): Promise<RecallConversationSummary | null> {
         const summary = await dependencies.episodicMemory.getLatestSummary(scope, conversationId);
         return summary ? toPublicSummary(summary) : null;

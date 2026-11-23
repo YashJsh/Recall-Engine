@@ -86,6 +86,12 @@ describe("Recall Engine public API", () => {
       assert.equal(messages.length, 2);
       assert.equal(messages[0]?.role, "user");
       assert.equal(messages[1]?.role, "assistant");
+      const fetched = await engine.conversations.getMessage(scope, conversation.id, completed.assistantMessage.id);
+      assert.equal(fetched?.content, "Hello from the host model.");
+      assert.equal(
+        await engine.conversations.getMessage({ ...scope, userId: randomUUID() }, conversation.id, completed.assistantMessage.id),
+        null,
+      );
       assert.equal(completed.semanticMemory.status, "failed");
       if (completed.semanticMemory.status !== "failed") assert.fail("Expected extraction to report the missing key");
       assert.match(completed.semanticMemory.error, /GROQ_API_KEY must be set/);
@@ -147,35 +153,36 @@ describe("Recall Engine public API", () => {
   });
 
   it("checks required storage services before returning an engine", async () => {
-    assert.equal(await countRecallEngineRedisConnections(), 0);
-    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    // Other local processes (e.g. the demo app) may hold their own engine connections.
+    const baselineRedis = await countRecallEngineRedisConnections();
+    const baselinePostgres = await countRecallEnginePostgresConnections();
     await assert.rejects(
       connectRecallEngine({ databaseUrl: "postgresql://recall:bad@127.0.0.1:1/recall_engine" }),
       RecallEngineConnectionError,
     );
-    assert.equal(await countRecallEngineRedisConnections(), 0);
-    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    assert.equal(await countRecallEngineRedisConnections(), baselineRedis);
+    assert.equal(await countRecallEnginePostgresConnections(), baselinePostgres);
 
     await assert.rejects(
       connectRecallEngine({ redisUrl: "redis://127.0.0.1:1" }),
       RecallEngineConnectionError,
     );
-    assert.equal(await countRecallEngineRedisConnections(), 0);
-    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    assert.equal(await countRecallEngineRedisConnections(), baselineRedis);
+    assert.equal(await countRecallEnginePostgresConnections(), baselinePostgres);
 
     await assert.rejects(
       connectRecallEngine({ qdrantUrl: "http://127.0.0.1:1" }),
       RecallEngineConnectionError,
     );
-    assert.equal(await countRecallEngineRedisConnections(), 0);
-    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    assert.equal(await countRecallEngineRedisConnections(), baselineRedis);
+    assert.equal(await countRecallEnginePostgresConnections(), baselinePostgres);
 
     const recovered = await connectRecallEngine();
-    assert.equal(await countRecallEngineRedisConnections(), 1);
-    assert.equal(await countRecallEnginePostgresConnections(), 1);
+    assert.equal(await countRecallEngineRedisConnections(), baselineRedis + 1);
+    assert.equal(await countRecallEnginePostgresConnections(), baselinePostgres + 1);
     await recovered.close();
-    assert.equal(await countRecallEngineRedisConnections(), 0);
-    assert.equal(await countRecallEnginePostgresConnections(), 0);
+    assert.equal(await countRecallEngineRedisConnections(), baselineRedis);
+    assert.equal(await countRecallEnginePostgresConnections(), baselinePostgres);
   });
 
   it("resumes prompt preparation from its persisted user message without duplicating it", async () => {

@@ -204,6 +204,12 @@ export interface RecallEngine {
       conversationId: string,
       options?: RecallListMessagesOptions,
     ): Promise<RecallConversationMessage[]>;
+    /** One message by ID, or null when it is missing or outside the scope and conversation. */
+    getMessage(
+      scope: RecallMemoryScope,
+      conversationId: string,
+      messageId: string,
+    ): Promise<RecallConversationMessage | null>;
     getLatestSummary(
       scope: RecallMemoryScope,
       conversationId: string,
