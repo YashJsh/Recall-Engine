@@ -176,6 +176,8 @@ export default function Home() {
 
   async function changeConversation(conversationId?: string) {
     if (pending || switching || (conversationId && conversationId === state?.conversationId)) return;
+    // Reuse the current conversation when it is still empty instead of creating another blank one.
+    if (!conversationId && state && !state.messages.some((m) => m.role === "user" || m.role === "assistant")) return;
     setSwitching(true);
     try {
       const response = await fetch("/api/conversation", {
@@ -225,7 +227,7 @@ export default function Home() {
         <p className="mt-6 mb-1.5 px-5 text-[11px] font-medium tracking-[0.12em] text-neutral-400 uppercase">Conversations</p>
         <ScrollArea className="min-h-0 flex-1">
           <nav className="space-y-0.5 px-3 pb-4">
-            {state?.conversations.map((conversation) => {
+            {state?.conversations.filter((conversation) => conversation.messageCount > 0).map((conversation) => {
               const active = conversation.id === state.conversationId;
               return (
                 <button
@@ -239,7 +241,7 @@ export default function Home() {
                   )}
                 >
                   <span className={cn("block truncate text-[13px]", active ? "text-neutral-900" : "text-neutral-600")}>
-                    {conversation.messageCount ? conversation.title : "Untitled conversation"}
+                    {conversation.title}
                   </span>
                   <span className="mt-0.5 block text-[11px] text-neutral-400">
                     {conversation.messageCount} messages{conversation.lastActivityAt ? ` · ${timeAgo(conversation.lastActivityAt)}` : ""}

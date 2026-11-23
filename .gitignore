@@ -10,3 +10,11 @@ src/generated/prisma/
 !.env.example
 *.log
 .DS_Store
+
+# Local planning and agent guidance documents
+.scratch/
+AGENTS.md
+GLOSSARY.md
+docs/adr/
+docs/agents/
+docs/api-plan.md
