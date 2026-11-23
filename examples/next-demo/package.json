@@ -1,0 +1,29 @@
+{
+  "name": "recall-engine-next-demo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "predev": "npm run build --prefix ../..",
+    "dev": "next dev --hostname 127.0.0.1",
+    "prebuild": "npm run build --prefix ../..",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "test:integration": "npm run build --prefix ../.. && tsc -p tsconfig.test.json && node --env-file=../../.env --test .test-dist/tests/chat-handler.test.js"
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^4.1.2",
+    "groq-sdk": "^1.6.0",
+    "next": "^16.1.0",
+    "pg": "^8.23.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recall-engine": "file:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0"
+  }
+}
