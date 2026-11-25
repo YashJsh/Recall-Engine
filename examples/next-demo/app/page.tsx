@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowUp, ChevronRight, MessageSquare, PanelRightClose, PanelRightOpen, Plus, ScanSearch } from "lucide-react";
+import Link from "next/link";
+import { ArrowUp, ChevronRight, Map as MapIcon, MessageSquare, PanelRightClose, PanelRightOpen, Plus, ScanSearch } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
@@ -251,6 +252,9 @@ export default function Home() {
         <div className="border-t border-neutral-200/80 px-5 py-4 text-[11px] text-neutral-500">
           <div className="flex justify-between"><span>Durable facts</span><span className="font-mono text-neutral-800">{state?.savedFactCount ?? 0}</span></div>
           <p className="mt-3 text-neutral-400">Facts carry across conversations. Notes are cleared when you switch.</p>
+          <Link href="/architecture" className="mt-4 flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[12px] text-neutral-700 shadow-xs transition-colors hover:bg-neutral-100">
+            How memory works <span aria-hidden>→</span>
+          </Link>
         </div>
       </aside>
 
@@ -265,6 +269,9 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-1">
             <Button variant="outline" size="sm" className="md:hidden" onClick={() => changeConversation()} disabled={busy}><Plus /> New</Button>
+            <Button variant="ghost" size="icon-sm" className="text-neutral-500 md:hidden" asChild>
+              <Link href="/architecture" aria-label="How memory works"><MapIcon /></Link>
+            </Button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="text-neutral-500" onClick={() => setInspectorOpen((open) => !open)} aria-label="Toggle inspector">

@@ -121,3 +121,7 @@ npm run demo
 ```
 
 Set `REDIS_URL` to use another Redis address. Run its integration tests with `npm test`.
+
+## Memory Lab demo
+
+`examples/next-demo` is a Next.js chat app for watching memory work turn by turn. Its `/architecture` page explains the memory design with diagrams, for non-engineers.
