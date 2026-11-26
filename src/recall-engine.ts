@@ -51,6 +51,7 @@ const DEFAULT_WORKING_MEMORY_TOKEN_BUDGET = 4_000;
 const DEFAULT_WORKING_MEMORY_SESSION_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_SEMANTIC_MEMORY_TOP_K = 5;
 const DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD = 0.5;
+const DEFAULT_SEMANTIC_MEMORY_DURABILITY_THRESHOLD = 0.7;
 const CLIENT_NAME = "recall-engine";
 
 export class RecallEngineConnectionError extends Error {
@@ -79,7 +80,11 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
     });
     await vectorStore.checkConnection();
 
-    const automaticMemory = new LazyAutomaticSemanticMemoryService(semanticStore, vectorStore);
+    const automaticMemory = new LazyAutomaticSemanticMemoryService(
+      semanticStore,
+      vectorStore,
+      config.semanticDurabilityThreshold,
+    );
     const retrieval = new SemanticMemoryRetrievalService(semanticStore, vectorStore);
     const summaryService = new ConversationSummaryService(
       episodicMemory,
@@ -241,6 +246,7 @@ class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor 
   constructor(
     private readonly store: SemanticMemoryStore,
     private readonly vectorStore: SemanticMemoryVectorStore,
+    private readonly durabilityThreshold: number,
   ) {}
 
   extractAndSave(
@@ -252,6 +258,8 @@ class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor 
       new GroqSemanticFactExtractor(),
       this.store,
       this.vectorStore,
+      undefined,
+      { durabilityThreshold: this.durabilityThreshold },
     );
     return this.service.extractAndSave(scope, sourceConversationId, messages);
   }
@@ -261,6 +269,7 @@ function readOptions(options: RecallEngineOptions): {
   contextInputTokenBudget: number;
   workingMemory: WorkingMemoryOptions;
   semanticRetrieval: { limit: number; scoreThreshold: number };
+  semanticDurabilityThreshold: number;
 } {
   return {
     contextInputTokenBudget: positiveIntegerOption(
@@ -292,6 +301,11 @@ function readOptions(options: RecallEngineOptions): {
         DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD,
       ),
     },
+    semanticDurabilityThreshold: scoreOption(
+      options.semanticMemoryDurabilityThreshold,
+      "RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD",
+      DEFAULT_SEMANTIC_MEMORY_DURABILITY_THRESHOLD,
+    ),
   };
 }
 

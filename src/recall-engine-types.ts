@@ -129,9 +129,15 @@ export interface RecallRetrievedSemanticMemory {
   score: number;
 }
 
+export type RecallSemanticFactKind = "fact" | "event" | "task" | "request";
+
 export interface RecallSemanticFactCandidate {
   content: string;
   category: RecallSemanticMemoryCategory;
+  /** Only "fact" candidates are saved; events and tasks are dropped until their layers exist. */
+  kind: RecallSemanticFactKind;
+  /** 0–1: how likely the statement stays true and useful in later conversations. */
+  durability: number;
   sourceMessageId: string;
 }
 
@@ -141,7 +147,9 @@ export type RecallSkippedSemanticFactReason =
   | "invalid_candidate"
   | "duplicate_in_batch"
   | "same_as_existing"
-  | "uncertain_comparison";
+  | "uncertain_comparison"
+  | "not_a_fact"
+  | "low_durability";
 
 export interface RecallSkippedSemanticFact {
   candidate: RecallSemanticFactCandidate;
@@ -192,6 +200,11 @@ export interface RecallEngineOptions {
    * Defaults to RECALL_SEMANTIC_MEMORY_SCORE_THRESHOLD or 0.5.
    */
   semanticMemoryScoreThreshold?: number;
+  /**
+   * Minimum durability (0–1) for an extracted fact to be saved.
+   * Defaults to RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD or 0.7.
+   */
+  semanticMemoryDurabilityThreshold?: number;
 }
 
 export interface RecallSemanticMemoryRetrievalOptions {

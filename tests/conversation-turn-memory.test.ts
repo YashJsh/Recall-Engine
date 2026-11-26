@@ -12,7 +12,7 @@ import {
 import { ConversationContextCompactor, type ContextTokenCounter } from "../src/context-compaction.js";
 import { EpisodicMemory, type ConversationScope } from "../src/episodic-memory.js";
 import { createPostgresClient } from "../src/postgres-client.js";
-import type { ExtractionMessage, SemanticFactCandidate } from "../src/semantic-fact-extractor.js";
+import type { ExtractionInput, SemanticFactCandidate } from "../src/semantic-fact-extractor.js";
 import {
   SemanticMemoryRetrievalService,
   type RetrievedSemanticMemory,
@@ -138,17 +138,17 @@ describe("ConversationTurnMemoryService", () => {
       sourceMessageId: randomUUID(),
       score: 0.9,
     };
-    const extractionInputs: ExtractionMessage[][] = [];
+    const extractionInputs: ExtractionInput[] = [];
     const currentFact: Omit<SemanticFactCandidate, "sourceMessageId"> = {
-      content: "The user prefers Qdrant for semantic memory.",
+      content: "The user wants vector database answers to mention Qdrant first.",
       category: SemanticMemoryCategory.preference,
+      kind: "fact",
+      durability: 0.9,
     };
     const automaticMemory = new AutomaticSemanticMemoryService({
-      async extract(messages) {
-        extractionInputs.push(messages);
-        const source = messages.find(({ content }) => content === "I prefer Qdrant for semantic memory.");
-        assert.ok(source);
-        return [{ ...currentFact, sourceMessageId: source.id }];
+      async extract(input) {
+        extractionInputs.push(input);
+        return [{ ...currentFact, sourceMessageId: input.target.id }];
       },
     }, semanticMemoryStore);
     const service = new ConversationTurnMemoryService(
@@ -190,21 +190,51 @@ describe("ConversationTurnMemoryService", () => {
       assert.equal(completed.semanticMemory.status, "success");
       if (completed.semanticMemory.status !== "success") assert.fail("Expected extraction to succeed");
       assert.equal(completed.semanticMemory.result.saved.length, 1);
-      assert.equal(completed.semanticMemory.result.saved[0]?.sourceMessageId, priorUser.id);
-      assert.deepEqual(extractionInputs[0]?.map(({ id, role, content }) => ({ id, role, content })), [
+      assert.equal(completed.semanticMemory.result.saved[0]?.sourceMessageId, prepared.userMessage.id);
+      assert.deepEqual(
+        { id: extractionInputs[0]?.target.id, role: extractionInputs[0]?.target.role, content: extractionInputs[0]?.target.content },
+        { id: prepared.userMessage.id, role: "user", content: "Which vector database do I prefer?" },
+      );
+      assert.deepEqual(extractionInputs[0]?.context.map(({ id, role, content }) => ({ id, role, content })), [
         { id: priorUser.id, role: "user", content: "I prefer Qdrant for semantic memory." },
         { id: priorAssistant.id, role: "assistant", content: "I'll use Qdrant for semantic memory." },
-        {
-          id: prepared.userMessage.id,
-          role: "user",
-          content: "Which vector database do I prefer?",
-        },
       ]);
       assert.equal(
-        extractionInputs[0]?.some(({ content }) => content === hostModelResponse),
+        [...(extractionInputs[0]?.context ?? []), extractionInputs[0]?.target]
+          .some((message) => message?.content === hostModelResponse),
         false,
         "the generated assistant answer is not evidence for this turn's facts",
       );
+    } finally {
+      await prisma.tenant.delete({ where: { id: owner.tenantId } });
+    }
+  });
+
+  it("passes the extractor only the newest user message as target and at most 4 earlier messages", async () => {
+    const owner = await createOwner("Conversation turn extraction window test");
+    const inputs: ExtractionInput[] = [];
+    const service = new ConversationTurnMemoryService(
+      episodicMemory,
+      createPromptBuilder([]),
+      new AutomaticSemanticMemoryService({
+        async extract(input) { inputs.push(input); return []; },
+      }, semanticMemoryStore),
+    );
+
+    try {
+      const conversation = await episodicMemory.createConversation(owner.scope);
+      const earlier = [];
+      for (let index = 0; index < 6; index += 1) {
+        earlier.push(await episodicMemory.appendMessage(owner.scope, conversation.id, {
+          role: index % 2 === 0 ? MessageRole.user : MessageRole.assistant,
+          content: `Earlier message ${index}`,
+        }));
+      }
+      const prepared = await service.prepareTurn(owner.scope, conversation.id, "System.", "I'm vegetarian.");
+      await service.completeTurn(owner.scope, prepared, "Noted.");
+
+      assert.equal(inputs[0]?.target.id, prepared.userMessage.id);
+      assert.deepEqual(inputs[0]?.context.map(({ id }) => id), earlier.slice(-4).map(({ id }) => id));
     } finally {
       await prisma.tenant.delete({ where: { id: owner.tenantId } });
     }

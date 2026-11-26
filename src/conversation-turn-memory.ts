@@ -5,13 +5,17 @@ import {
   type ConversationScope,
   type EpisodicMemory,
 } from "./episodic-memory.js";
-import type { AutomaticSemanticMemoryResult } from "./semantic-memory-extraction-service.js";
+import {
+  EXTRACTION_CONTEXT_LIMIT,
+  type AutomaticSemanticMemoryResult,
+} from "./semantic-memory-extraction-service.js";
 import type { ExtractionMessage } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
 
 export { ConversationTurnOrderError };
 
-const EXTRACTION_CONTEXT_LIMIT = 8;
+/** The newest user message plus reference-only context. */
+const EXTRACTION_MESSAGE_LIMIT = EXTRACTION_CONTEXT_LIMIT + 1;
 
 type PersistedMessage = NonNullable<
   Awaited<ReturnType<EpisodicMemory["getMessageById"]>>
@@ -179,15 +183,15 @@ export class ConversationTurnMemoryService {
     userMessage: PersistedMessage,
   ): Promise<ExtractionMessage[]> {
     const messages = await this.episodicMemory.listMessages(scope, conversationId, {
-      afterSequenceNo: Math.max(0, userMessage.sequenceNo - EXTRACTION_CONTEXT_LIMIT),
+      afterSequenceNo: Math.max(0, userMessage.sequenceNo - EXTRACTION_MESSAGE_LIMIT),
       throughSequenceNo: userMessage.sequenceNo,
-      limit: EXTRACTION_CONTEXT_LIMIT,
+      limit: EXTRACTION_MESSAGE_LIMIT,
     });
     const extractionMessages = messages.flatMap((message): ExtractionMessage[] => {
       if (message.role !== MessageRole.user && message.role !== MessageRole.assistant) return [];
       return [{ id: message.id, role: message.role, content: message.content }];
     });
-    if (!extractionMessages.some(({ id }) => id === userMessage.id)) {
+    if (extractionMessages.at(-1)?.id !== userMessage.id) {
       throw new PreparedConversationTurnError();
     }
     return extractionMessages;

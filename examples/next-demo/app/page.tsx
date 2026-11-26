@@ -47,7 +47,7 @@ type RetrievedMemory = {
   score: number;
   sourceMessage?: Pick<Message, "id" | "content"> | null;
 };
-type Candidate = { content: string; category: Category };
+type Candidate = { content: string; category: Category; kind?: string; durability?: number };
 type SemanticOutcome =
   | {
     status: "success";
@@ -614,7 +614,7 @@ function TurnPanel({ trace }: { trace: TurnTrace | null }) {
                   dim
                   main={skip.candidate.content}
                   side={<Tag>skipped</Tag>}
-                  sub={<><Tag>{skip.candidate.category.replace("_", " ")}</Tag>{skip.reason.replaceAll("_", " ")}</>}
+                  sub={<><Tag>{skip.candidate.category.replace("_", " ")}</Tag>{skip.candidate.kind && <Tag>{skip.candidate.kind}</Tag>}{skip.reason.replaceAll("_", " ")}{skip.candidate.durability !== undefined && ` · durability ${skip.candidate.durability.toFixed(2)}`}</>}
                 />
               ))}
             </ul>

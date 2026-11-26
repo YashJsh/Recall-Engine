@@ -1,5 +1,5 @@
 import { SemanticMemoryCategory, type SemanticMemoryCategory as SemanticMemoryCategoryType } from "./generated/prisma/enums.js";
-import type { ExtractionMessage, SemanticFactCandidate } from "./semantic-fact-extractor.js";
+import type { ExtractionInput, ExtractionMessage, SemanticFactCandidate } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope, SemanticMemoryRecord } from "./semantic-memory.js";
 import { SemanticMemoryStore } from "./semantic-memory.js";
 import { GroqSemanticFactComparator, type SemanticFactComparator } from "./semantic-fact-comparator.js";
@@ -10,7 +10,7 @@ import type {
 } from "./semantic-memory-vector-store.js";
 
 export interface SemanticFactExtractor {
-  extract(messages: ExtractionMessage[]): Promise<SemanticFactCandidate[]>;
+  extract(input: ExtractionInput): Promise<SemanticFactCandidate[]>;
 }
 
 export interface SemanticMemoryIndexer {
@@ -29,7 +29,9 @@ export type SkippedSemanticFactReason =
   | "invalid_candidate"
   | "duplicate_in_batch"
   | "same_as_existing"
-  | "uncertain_comparison";
+  | "uncertain_comparison"
+  | "not_a_fact"
+  | "low_durability";
 
 export interface SkippedSemanticFact {
   candidate: SemanticFactCandidate;
@@ -44,19 +46,42 @@ export interface AutomaticSemanticMemoryResult {
 }
 
 const CATEGORIES = Object.values(SemanticMemoryCategory);
+/** Earlier messages given to the extractor only to resolve references in the newest user message. */
+export const EXTRACTION_CONTEXT_LIMIT = 4;
+export const DEFAULT_DURABILITY_THRESHOLD = 0.7;
+
+export interface AutomaticSemanticMemoryOptions {
+  /** Minimum durability (0–1) for a fact candidate to be saved. Defaults to 0.7. */
+  durabilityThreshold?: number;
+  /** Clock used to give the extractor the current date. */
+  now?: () => Date;
+}
 const CONFIRMATION_ONLY_PATTERN = /^(?:the\s+)?user\s+(?:agrees?|agreed|confirms?|confirmed|says?\s+yes|said\s+yes)\b/i;
 
-/** Extracts candidate facts, applies basic quality/provenance checks, and saves suitable facts. */
+/**
+ * Extracts candidates from the newest user message, keeps only durable facts, and saves them.
+ * The last supplied message is the extraction target; up to EXTRACTION_CONTEXT_LIMIT earlier
+ * messages are reference-only context.
+ */
 export class AutomaticSemanticMemoryService {
   private readonly comparator?: SemanticFactComparator;
+  private readonly durabilityThreshold: number;
+  private readonly now: () => Date;
 
   constructor(
     private readonly extractor: SemanticFactExtractor,
     private readonly store: SemanticMemoryStore,
     private readonly vectorStore?: SemanticMemoryIndexer,
     comparator?: SemanticFactComparator,
+    options: AutomaticSemanticMemoryOptions = {},
   ) {
     this.comparator = comparator ?? (vectorStore ? new GroqSemanticFactComparator() : undefined);
+    const threshold = options.durabilityThreshold ?? DEFAULT_DURABILITY_THRESHOLD;
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+      throw new Error("durabilityThreshold must be a number between 0 and 1");
+    }
+    this.durabilityThreshold = threshold;
+    this.now = options.now ?? (() => new Date());
   }
 
   async extractAndSave(
@@ -64,22 +89,32 @@ export class AutomaticSemanticMemoryService {
     sourceConversationId: string,
     messages: ExtractionMessage[],
   ): Promise<AutomaticSemanticMemoryResult> {
-    const extracted = await this.extractor.extract(messages);
-    const userMessageIds = new Set(
-      messages.filter((message) => message.role === "user").map((message) => message.id),
-    );
+    const target = messages.at(-1);
+    if (!target || target.role !== "user") {
+      throw new Error("The last extraction message must be the newest user message");
+    }
+    const context = messages.slice(0, -1).slice(-EXTRACTION_CONTEXT_LIMIT);
+    const extracted = await this.extractor.extract({ context, target, currentDate: this.now() });
     const saved: SemanticMemoryRecord[] = [];
     const skipped: SkippedSemanticFact[] = [];
     const supersededMemoryIds: string[] = [];
     const seenFacts = new Set<string>();
 
     for (const candidate of extracted) {
-      if (!userMessageIds.has(candidate.sourceMessageId)) {
+      if (candidate.sourceMessageId !== target.id) {
         skipped.push({ candidate, reason: "unsupported_source" });
         continue;
       }
       if (!candidate.content.trim() || !CATEGORIES.includes(candidate.category as SemanticMemoryCategoryType)) {
         skipped.push({ candidate, reason: "invalid_candidate" });
+        continue;
+      }
+      if (candidate.kind !== "fact") {
+        skipped.push({ candidate, reason: "not_a_fact" });
+        continue;
+      }
+      if (!(candidate.durability >= this.durabilityThreshold)) {
+        skipped.push({ candidate, reason: "low_durability" });
         continue;
       }
       if (CONFIRMATION_ONLY_PATTERN.test(candidate.content.trim())) {
