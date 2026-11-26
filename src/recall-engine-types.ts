@@ -25,6 +25,57 @@ export interface RecallConversation {
   startedAt: Date;
 }
 
+export type RecallEpisodeType = "event" | "conversation";
+
+/** Episodic memory: a dated record of a past event or conversation, cited to the transcript. */
+export interface RecallEpisode {
+  id: string;
+  type: RecallEpisodeType;
+  content: string;
+  /** Event date, or the conversation's start time. Null when an event has no clear date. */
+  occurredAt: Date | null;
+  /** Conversation episodes: time of the last summarized message. */
+  endedAt: Date | null;
+  sourceConversationId: string;
+  /** Event episodes: the user message the event came from. */
+  sourceMessageId: string | null;
+  /** Conversation episodes: last transcript sequence number covered. */
+  throughSequenceNo: number | null;
+  createdAt: Date;
+}
+
+export interface RecallRetrievedEpisode {
+  episodeId: string;
+  type: RecallEpisodeType;
+  content: string;
+  occurredAt: Date | null;
+  endedAt: Date | null;
+  sourceConversationId: string;
+  sourceMessageId: string | null;
+  score: number;
+}
+
+export interface RecallEpisodeRetrievalOptions {
+  limit?: number;
+  scoreThreshold?: number;
+}
+
+export interface RecallConversationEndResult {
+  status: "ended" | "already_ended";
+  /** Null when the conversation had no messages. */
+  episode: RecallEpisode | null;
+}
+
+/** Earlier unended conversations finished (best-effort) when a new conversation was created. */
+export interface RecallFinishedConversations {
+  ended: Array<{ conversationId: string; episodeId: string | null }>;
+  failed: Array<{ conversationId: string; error: string }>;
+}
+
+export interface RecallCreatedConversation extends RecallConversation {
+  finishedConversations: RecallFinishedConversations;
+}
+
 export interface RecallConversationOverview extends RecallConversation {
   /** First user message, or null when the conversation has none. */
   preview: string | null;
@@ -88,6 +139,7 @@ export interface RecallPreparedTurn {
   userMessage: Pick<RecallConversationMessage, "id" | "sequenceNo" | "role" | "content">;
   prompt: RecallContextCompactionResult & {
     semanticMemories: RecallRetrievedSemanticMemory[];
+    episodes: RecallRetrievedEpisode[];
   };
 }
 
@@ -138,6 +190,8 @@ export interface RecallSemanticFactCandidate {
   kind: RecallSemanticFactKind;
   /** 0–1: how likely the statement stays true and useful in later conversations. */
   durability: number;
+  /** Events only: the date it happened, or null. */
+  occurredAt: Date | null;
   sourceMessageId: string;
 }
 
@@ -149,7 +203,8 @@ export type RecallSkippedSemanticFactReason =
   | "same_as_existing"
   | "uncertain_comparison"
   | "not_a_fact"
-  | "low_durability";
+  | "low_durability"
+  | "duplicate_episode";
 
 export interface RecallSkippedSemanticFact {
   candidate: RecallSemanticFactCandidate;
@@ -159,6 +214,8 @@ export interface RecallSkippedSemanticFact {
 export interface RecallAutomaticSemanticMemoryResult {
   extracted: RecallSemanticFactCandidate[];
   saved: RecallSemanticMemoryFact[];
+  /** Event episodes saved from this turn. */
+  savedEpisodes: RecallEpisode[];
   skipped: RecallSkippedSemanticFact[];
   supersededMemoryIds: string[];
 }
@@ -205,6 +262,20 @@ export interface RecallEngineOptions {
    * Defaults to RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD or 0.7.
    */
   semanticMemoryDurabilityThreshold?: number;
+  /** Qdrant collection for episodes. Defaults to QDRANT_EPISODE_COLLECTION or episodes. */
+  qdrantEpisodeCollection?: string;
+  /**
+   * Minimum durability (0–1) for an extracted event to be saved as an episode.
+   * Defaults to RECALL_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD or 0.3.
+   */
+  episodicMemoryEventDurabilityThreshold?: number;
+  /** Max episodes recalled into each turn's prompt. Defaults to RECALL_EPISODIC_MEMORY_TOP_K or 3. */
+  episodicMemoryTopK?: number;
+  /**
+   * Minimum relevance score (0–1) for an episode to enter the prompt.
+   * Defaults to RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD or 0.5.
+   */
+  episodicMemoryScoreThreshold?: number;
 }
 
 export interface RecallSemanticMemoryRetrievalOptions {
@@ -214,7 +285,13 @@ export interface RecallSemanticMemoryRetrievalOptions {
 
 export interface RecallEngine {
   conversations: {
-    create(scope: RecallMemoryScope, title?: string): Promise<RecallConversation>;
+    /**
+     * Creates a conversation. First, best-effort, finishes the user's earlier unended
+     * conversations into episodes; failures are reported, never thrown.
+     */
+    create(scope: RecallMemoryScope, title?: string): Promise<RecallCreatedConversation>;
+    /** Summarizes the conversation into an episode and marks it ended. Idempotent. */
+    end(scope: RecallMemoryScope, conversationId: string): Promise<RecallConversationEndResult>;
     /** The scope's conversations, most recent activity first. */
     list(scope: RecallMemoryScope): Promise<RecallConversationOverview[]>;
     prepareTurn(input: PrepareTurnInput): Promise<RecallPreparedTurn>;
@@ -264,6 +341,15 @@ export interface RecallEngine {
       sourceConversationId: string,
       messages: Array<{ id: string; role: "user" | "assistant"; content: string }>,
     ): Promise<RecallAutomaticSemanticMemoryResult>;
+  };
+  episodicMemory: {
+    retrieve(
+      scope: RecallSemanticMemoryScope,
+      queryText: string,
+      options?: RecallEpisodeRetrievalOptions,
+    ): Promise<RecallRetrievedEpisode[]>;
+    /** The user's episodes, most recent first. */
+    list(scope: RecallSemanticMemoryScope, options?: { limit?: number }): Promise<RecallEpisode[]>;
   };
   close(): Promise<void>;
 }

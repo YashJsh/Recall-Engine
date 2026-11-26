@@ -1,6 +1,7 @@
 import { SemanticMemoryCategory, type SemanticMemoryCategory as SemanticMemoryCategoryType } from "./generated/prisma/enums.js";
 import type { ExtractionInput, ExtractionMessage, SemanticFactCandidate } from "./semantic-fact-extractor.js";
 import type { SemanticMemoryScope, SemanticMemoryRecord } from "./semantic-memory.js";
+import type { CreateEventEpisodeInput, EpisodeRecord } from "./episode-store.js";
 import { SemanticMemoryStore } from "./semantic-memory.js";
 import { GroqSemanticFactComparator, type SemanticFactComparator } from "./semantic-fact-comparator.js";
 import type {
@@ -31,16 +32,24 @@ export type SkippedSemanticFactReason =
   | "same_as_existing"
   | "uncertain_comparison"
   | "not_a_fact"
-  | "low_durability";
+  | "low_durability"
+  | "duplicate_episode";
 
 export interface SkippedSemanticFact {
   candidate: SemanticFactCandidate;
   reason: SkippedSemanticFactReason;
 }
 
+/** Saves event episodes (and indexes them); returns null for a duplicate. */
+export interface EventEpisodeWriter {
+  saveEvent(scope: SemanticMemoryScope, input: CreateEventEpisodeInput): Promise<EpisodeRecord | null>;
+}
+
 export interface AutomaticSemanticMemoryResult {
   extracted: SemanticFactCandidate[];
   saved: SemanticMemoryRecord[];
+  /** Event episodes saved from this turn. */
+  savedEpisodes: EpisodeRecord[];
   skipped: SkippedSemanticFact[];
   supersededMemoryIds: string[];
 }
@@ -49,10 +58,15 @@ const CATEGORIES = Object.values(SemanticMemoryCategory);
 /** Earlier messages given to the extractor only to resolve references in the newest user message. */
 export const EXTRACTION_CONTEXT_LIMIT = 4;
 export const DEFAULT_DURABILITY_THRESHOLD = 0.7;
+export const DEFAULT_EVENT_DURABILITY_THRESHOLD = 0.3;
 
 export interface AutomaticSemanticMemoryOptions {
   /** Minimum durability (0–1) for a fact candidate to be saved. Defaults to 0.7. */
   durabilityThreshold?: number;
+  /** Where kind=event candidates go. Without it, events are skipped as not_a_fact. */
+  episodes?: EventEpisodeWriter;
+  /** Minimum durability (0–1) for an event to become an episode. Defaults to 0.3. */
+  eventDurabilityThreshold?: number;
   /** Clock used to give the extractor the current date. */
   now?: () => Date;
 }
@@ -66,6 +80,8 @@ const CONFIRMATION_ONLY_PATTERN = /^(?:the\s+)?user\s+(?:agrees?|agreed|confirms
 export class AutomaticSemanticMemoryService {
   private readonly comparator?: SemanticFactComparator;
   private readonly durabilityThreshold: number;
+  private readonly eventDurabilityThreshold: number;
+  private readonly episodes?: EventEpisodeWriter;
   private readonly now: () => Date;
 
   constructor(
@@ -76,11 +92,15 @@ export class AutomaticSemanticMemoryService {
     options: AutomaticSemanticMemoryOptions = {},
   ) {
     this.comparator = comparator ?? (vectorStore ? new GroqSemanticFactComparator() : undefined);
-    const threshold = options.durabilityThreshold ?? DEFAULT_DURABILITY_THRESHOLD;
-    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-      throw new Error("durabilityThreshold must be a number between 0 and 1");
-    }
-    this.durabilityThreshold = threshold;
+    this.durabilityThreshold = validThreshold(
+      options.durabilityThreshold ?? DEFAULT_DURABILITY_THRESHOLD,
+      "durabilityThreshold",
+    );
+    this.eventDurabilityThreshold = validThreshold(
+      options.eventDurabilityThreshold ?? DEFAULT_EVENT_DURABILITY_THRESHOLD,
+      "eventDurabilityThreshold",
+    );
+    if (options.episodes) this.episodes = options.episodes;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -96,6 +116,7 @@ export class AutomaticSemanticMemoryService {
     const context = messages.slice(0, -1).slice(-EXTRACTION_CONTEXT_LIMIT);
     const extracted = await this.extractor.extract({ context, target, currentDate: this.now() });
     const saved: SemanticMemoryRecord[] = [];
+    const savedEpisodes: EpisodeRecord[] = [];
     const skipped: SkippedSemanticFact[] = [];
     const supersededMemoryIds: string[] = [];
     const seenFacts = new Set<string>();
@@ -107,6 +128,23 @@ export class AutomaticSemanticMemoryService {
       }
       if (!candidate.content.trim() || !CATEGORIES.includes(candidate.category as SemanticMemoryCategoryType)) {
         skipped.push({ candidate, reason: "invalid_candidate" });
+        continue;
+      }
+      if (candidate.kind === "event" && this.episodes) {
+        if (!candidate.content.trim()) {
+          skipped.push({ candidate, reason: "invalid_candidate" });
+        } else if (!(candidate.durability >= this.eventDurabilityThreshold)) {
+          skipped.push({ candidate, reason: "low_durability" });
+        } else {
+          const episode = await this.episodes.saveEvent(scope, {
+            content: candidate.content,
+            occurredAt: candidate.occurredAt,
+            sourceConversationId,
+            sourceMessageId: candidate.sourceMessageId,
+          });
+          if (episode) savedEpisodes.push(episode);
+          else skipped.push({ candidate, reason: "duplicate_episode" });
+        }
         continue;
       }
       if (candidate.kind !== "fact") {
@@ -162,7 +200,7 @@ export class AutomaticSemanticMemoryService {
       saved.push(record);
     }
 
-    return { extracted, saved, skipped, supersededMemoryIds };
+    return { extracted, saved, savedEpisodes, skipped, supersededMemoryIds };
   }
 
   private async loadActiveSimilarFacts(
@@ -176,4 +214,11 @@ export class AutomaticSemanticMemoryService {
       .filter((record): record is SemanticMemoryRecord => record !== null && record.status === "active")
       .map(({ id, content, category }) => ({ id, content, category }));
   }
+}
+
+function validThreshold(value: number, name: string): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${name} must be a number between 0 and 1`);
+  }
+  return value;
 }

@@ -26,11 +26,25 @@ import { SemanticMemoryVectorStore } from "./semantic-memory-vector-store.js";
 import { ConversationSummaryService, type SummaryGenerationInput, type SummaryGenerator } from "./summary-service.js";
 import { GroqSummaryGenerator } from "./providers/groq-summary-generator.js";
 import { RedisWorkingMemory, type WorkingMemoryOptions } from "./working-memory.js";
+import { EpisodeStore, type EpisodeRecord } from "./episode-store.js";
+import { EpisodeVectorStore } from "./episode-vector-store.js";
+import { EpisodeRetrievalService } from "./episode-retrieval.js";
+import {
+  ConversationEpisodeService,
+  IndexedEpisodeWriter,
+  type EpisodeSummaryGenerator,
+  type EpisodeSummaryInput,
+} from "./episodic-memory-service.js";
+import { GroqEpisodeSummarizer } from "./providers/groq-episode-summarizer.js";
+import { FastEmbedTextEmbedder } from "./semantic-memory-vector-store.js";
 import type {
   RecallContextCompactionResult,
   RecallAutomaticSemanticMemoryResult,
   RecallCompletedTurn,
-  RecallConversation,
+  RecallConversationEndResult,
+  RecallCreatedConversation,
+  RecallEpisode,
+  RecallRetrievedEpisode,
   RecallConversationOverview,
   RecallConversationMessage,
   RecallConversationSummary,
@@ -52,6 +66,9 @@ const DEFAULT_WORKING_MEMORY_SESSION_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_SEMANTIC_MEMORY_TOP_K = 5;
 const DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD = 0.5;
 const DEFAULT_SEMANTIC_MEMORY_DURABILITY_THRESHOLD = 0.7;
+const DEFAULT_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD = 0.3;
+const DEFAULT_EPISODIC_MEMORY_TOP_K = 3;
+const DEFAULT_EPISODIC_MEMORY_SCORE_THRESHOLD = 0.5;
 const CLIENT_NAME = "recall-engine";
 
 export class RecallEngineConnectionError extends Error {
@@ -74,16 +91,34 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
 
     const episodicMemory = new EpisodicMemory(prisma);
     const semanticStore = new SemanticMemoryStore(prisma);
+    const embedder = new FastEmbedTextEmbedder();
     const vectorStore = new SemanticMemoryVectorStore({
       ...(options.qdrantUrl ? { url: options.qdrantUrl } : {}),
       ...(options.qdrantCollection ? { collectionName: options.qdrantCollection } : {}),
+      embedder,
     });
     await vectorStore.checkConnection();
+    const episodeStore = new EpisodeStore(prisma);
+    const episodeVectorStore = new EpisodeVectorStore({
+      ...(options.qdrantUrl ? { url: options.qdrantUrl } : {}),
+      ...(options.qdrantEpisodeCollection ? { collectionName: options.qdrantEpisodeCollection } : {}),
+      embedder,
+    });
+    const episodeWriter = new IndexedEpisodeWriter(episodeStore, episodeVectorStore);
+    const episodeRetrieval = new EpisodeRetrievalService(episodeStore, episodeVectorStore);
+    const conversationEpisodes = new ConversationEpisodeService(
+      episodicMemory,
+      episodeStore,
+      episodeWriter,
+      new LazyEpisodeSummarizer(),
+    );
 
     const automaticMemory = new LazyAutomaticSemanticMemoryService(
       semanticStore,
       vectorStore,
       config.semanticDurabilityThreshold,
+      episodeWriter,
+      config.eventDurabilityThreshold,
     );
     const retrieval = new SemanticMemoryRetrievalService(semanticStore, vectorStore);
     const summaryService = new ConversationSummaryService(
@@ -95,7 +130,13 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
       summaryService,
       { inputTokenBudget: config.contextInputTokenBudget },
     );
-    const promptBuilder = new ConversationPromptBuilder(compactor, retrieval, config.semanticRetrieval);
+    const promptBuilder = new ConversationPromptBuilder(
+      compactor,
+      retrieval,
+      config.semanticRetrieval,
+      episodeRetrieval,
+      config.episodeRetrieval,
+    );
     const turnService = new ConversationTurnMemoryService(episodicMemory, promptBuilder, automaticMemory);
     const workingMemory = new RedisWorkingMemory(redis, config.workingMemory);
 
@@ -107,6 +148,9 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
       retrieval,
       vectorStore,
       automaticMemory,
+      episodeStore,
+      episodeRetrieval,
+      conversationEpisodes,
       close: () => closeClients(prisma, redis),
     });
   } catch (error) {
@@ -126,6 +170,9 @@ interface EngineDependencies {
   retrieval: SemanticMemoryRetrievalService;
   vectorStore: SemanticMemoryVectorStore;
   automaticMemory: LazyAutomaticSemanticMemoryService;
+  episodeStore: EpisodeStore;
+  episodeRetrieval: EpisodeRetrievalService;
+  conversationEpisodes: ConversationEpisodeService;
   close: () => Promise<void>;
 }
 
@@ -134,8 +181,19 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
 
   return {
     conversations: {
-      async create(scope, title): Promise<RecallConversation> {
-        return dependencies.episodicMemory.createConversation(scope, title);
+      async create(scope, title): Promise<RecallCreatedConversation> {
+        const finishedConversations = await dependencies.conversationEpisodes
+          .finishPrevious({ tenantId: scope.tenantId, userId: scope.userId })
+          .catch((error: unknown) => ({
+            ended: [],
+            failed: [{ conversationId: "*", error: error instanceof Error ? error.message : String(error) }],
+          }));
+        const conversation = await dependencies.episodicMemory.createConversation(scope, title);
+        return { ...conversation, finishedConversations };
+      },
+      async end(scope, conversationId): Promise<RecallConversationEndResult> {
+        const result = await dependencies.conversationEpisodes.end(scope, conversationId);
+        return { status: result.status, episode: result.episode ? toPublicEpisode(result.episode) : null };
       },
       async list(scope): Promise<RecallConversationOverview[]> {
         return dependencies.episodicMemory.listConversations(scope);
@@ -224,6 +282,14 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
         );
       },
     },
+    episodicMemory: {
+      async retrieve(scope, queryText, options): Promise<RecallRetrievedEpisode[]> {
+        return dependencies.episodeRetrieval.retrieve(scope, queryText, options);
+      },
+      async list(scope, options): Promise<RecallEpisode[]> {
+        return (await dependencies.episodeStore.list(scope, options)).map(toPublicEpisode);
+      },
+    },
     close() {
       closePromise ??= dependencies.close();
       return closePromise;
@@ -240,6 +306,15 @@ class LazySummaryGenerator implements SummaryGenerator {
   }
 }
 
+class LazyEpisodeSummarizer implements EpisodeSummaryGenerator {
+  private summarizer?: GroqEpisodeSummarizer;
+
+  summarize(input: EpisodeSummaryInput): Promise<string> {
+    this.summarizer ??= new GroqEpisodeSummarizer();
+    return this.summarizer.summarize(input);
+  }
+}
+
 class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor {
   private service?: AutomaticSemanticMemoryService;
 
@@ -247,6 +322,8 @@ class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor 
     private readonly store: SemanticMemoryStore,
     private readonly vectorStore: SemanticMemoryVectorStore,
     private readonly durabilityThreshold: number,
+    private readonly episodeWriter: IndexedEpisodeWriter,
+    private readonly eventDurabilityThreshold: number,
   ) {}
 
   extractAndSave(
@@ -259,7 +336,11 @@ class LazyAutomaticSemanticMemoryService implements SemanticMemoryTurnExtractor 
       this.store,
       this.vectorStore,
       undefined,
-      { durabilityThreshold: this.durabilityThreshold },
+      {
+        durabilityThreshold: this.durabilityThreshold,
+        episodes: this.episodeWriter,
+        eventDurabilityThreshold: this.eventDurabilityThreshold,
+      },
     );
     return this.service.extractAndSave(scope, sourceConversationId, messages);
   }
@@ -270,6 +351,8 @@ function readOptions(options: RecallEngineOptions): {
   workingMemory: WorkingMemoryOptions;
   semanticRetrieval: { limit: number; scoreThreshold: number };
   semanticDurabilityThreshold: number;
+  eventDurabilityThreshold: number;
+  episodeRetrieval: { limit: number; scoreThreshold: number };
 } {
   return {
     contextInputTokenBudget: positiveIntegerOption(
@@ -306,6 +389,23 @@ function readOptions(options: RecallEngineOptions): {
       "RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD",
       DEFAULT_SEMANTIC_MEMORY_DURABILITY_THRESHOLD,
     ),
+    eventDurabilityThreshold: scoreOption(
+      options.episodicMemoryEventDurabilityThreshold,
+      "RECALL_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD",
+      DEFAULT_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD,
+    ),
+    episodeRetrieval: {
+      limit: positiveIntegerOption(
+        options.episodicMemoryTopK,
+        "RECALL_EPISODIC_MEMORY_TOP_K",
+        DEFAULT_EPISODIC_MEMORY_TOP_K,
+      ),
+      scoreThreshold: scoreOption(
+        options.episodicMemoryScoreThreshold,
+        "RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD",
+        DEFAULT_EPISODIC_MEMORY_SCORE_THRESHOLD,
+      ),
+    },
   };
 }
 
@@ -364,6 +464,7 @@ function toPublicPreparedTurn(prepared: PreparedConversationTurn): RecallPrepare
     prompt: {
       ...toPublicCompactionResult(prepared.prompt),
       semanticMemories: prepared.prompt.semanticMemories,
+      episodes: prepared.prompt.episodes,
     },
   };
 }
@@ -424,7 +525,22 @@ function toPublicAutomaticResult(result: AutomaticSemanticMemoryResult): RecallA
   return {
     extracted: result.extracted,
     saved: result.saved.map(toPublicFact),
+    savedEpisodes: result.savedEpisodes.map(toPublicEpisode),
     skipped: result.skipped,
     supersededMemoryIds: result.supersededMemoryIds,
+  };
+}
+
+function toPublicEpisode(episode: EpisodeRecord): RecallEpisode {
+  return {
+    id: episode.id,
+    type: episode.type,
+    content: episode.content,
+    occurredAt: episode.occurredAt,
+    endedAt: episode.endedAt,
+    sourceConversationId: episode.sourceConversationId,
+    sourceMessageId: episode.sourceMessageId,
+    throughSequenceNo: episode.throughSequenceNo,
+    createdAt: episode.createdAt,
   };
 }

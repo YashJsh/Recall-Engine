@@ -9,6 +9,19 @@ import {
   type SemanticMemoryRetrievalOptions,
 } from "./semantic-memory-retrieval.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
+import {
+  formatEpisodePromptContext,
+  type EpisodeRetrievalOptions,
+  type RetrievedEpisode,
+} from "./episode-retrieval.js";
+
+export interface EpisodeRetriever {
+  retrieve(
+    scope: SemanticMemoryScope,
+    queryText: string,
+    options?: EpisodeRetrievalOptions,
+  ): Promise<RetrievedEpisode[]>;
+}
 
 export interface SemanticMemoryRetriever {
   retrieve(
@@ -20,6 +33,8 @@ export interface SemanticMemoryRetriever {
 
 export interface ConversationPromptBuildResult extends ContextCompactionResult {
   semanticMemories: RetrievedSemanticMemory[];
+  /** Episodic memory retrieved for this turn; empty when no episode retriever is configured. */
+  episodes: RetrievedEpisode[];
 }
 
 /** Combines verified semantic memories with the bounded conversation prompt for a model caller. */
@@ -29,6 +44,9 @@ export class ConversationPromptBuilder {
     private readonly semanticMemoryRetriever: SemanticMemoryRetriever,
     /** Top-N limit and minimum relevance score for facts added to the prompt. */
     private readonly retrievalOptions: SemanticMemoryRetrievalOptions = {},
+    private readonly episodeRetriever?: EpisodeRetriever,
+    /** Top-N limit and minimum relevance score for episodes added to the prompt. */
+    private readonly episodeRetrievalOptions: EpisodeRetrievalOptions = {},
   ) {}
 
   async build(
@@ -43,17 +61,19 @@ export class ConversationPromptBuilder {
       tenantId: scope.tenantId,
       userId: scope.userId,
     };
-    const semanticMemories = await this.semanticMemoryRetriever.retrieve(
-      memoryScope,
-      currentUserMessage,
-      this.retrievalOptions,
-    );
-    const memoryContext = formatSemanticMemoryPromptContext(semanticMemories);
-    const augmentedSystemPrompt = memoryContext
-      ? `${systemPrompt}\n\n${memoryContext}`
-      : systemPrompt;
+    const [semanticMemories, episodes] = await Promise.all([
+      this.semanticMemoryRetriever.retrieve(memoryScope, currentUserMessage, this.retrievalOptions),
+      this.episodeRetriever
+        ? this.episodeRetriever.retrieve(memoryScope, currentUserMessage, this.episodeRetrievalOptions)
+        : Promise.resolve([]),
+    ]);
+    const augmentedSystemPrompt = [
+      systemPrompt,
+      formatSemanticMemoryPromptContext(semanticMemories),
+      formatEpisodePromptContext(episodes),
+    ].filter(Boolean).join("\n\n");
     const compacted = await this.contextCompactor.build(scope, conversationId, augmentedSystemPrompt);
 
-    return { ...compacted, semanticMemories };
+    return { ...compacted, semanticMemories, episodes };
   }
 }

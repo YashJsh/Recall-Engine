@@ -23,12 +23,12 @@ export interface SimilarSemanticMemoryId {
   score: number;
 }
 
-interface TextEmbedder {
+export interface TextEmbedder {
   embedPassage(text: string): Promise<number[]>;
   embedQuery(text: string): Promise<number[]>;
 }
 
-interface QdrantAdapter {
+export interface QdrantAdapter {
   collectionExists(collectionName: string): Promise<{ exists: boolean }>;
   createCollection(collectionName: string, config: {
     vectors: { size: number; distance: "Cosine" };
@@ -179,7 +179,7 @@ export class SemanticMemoryVectorStore {
   }
 }
 
-class FastEmbedTextEmbedder implements TextEmbedder {
+export class FastEmbedTextEmbedder implements TextEmbedder {
   private modelPromise?: Promise<FlagEmbedding>;
 
   async embedPassage(text: string): Promise<number[]> {

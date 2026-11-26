@@ -112,6 +112,15 @@ Turn preparation saves the user message before building its prompt. If retrieval
 Each turn's prompt gets the durable facts returned by a semantic search on the current user message. Two settings bound that recall: at most `RECALL_SEMANTIC_MEMORY_TOP_K` facts (default 5, option `semanticMemoryTopK`), and only facts whose cosine similarity is at least `RECALL_SEMANTIC_MEMORY_SCORE_THRESHOLD` (default 0.5, option `semanticMemoryScoreThreshold`, range 0–1). Weaker matches are left out of `prepareTurn`'s `prompt.semanticMemories` and the system prompt. Raise the threshold if unrelated facts show up; lower it if relevant ones are missed. Explicit `semanticMemory.retrieve` calls take their own `limit` and `scoreThreshold`.
 
 After each turn, the extractor reads only the newest user message as its target (up to 4 earlier messages are reference-only context) and labels every candidate with a `kind` (`fact`, `event`, `task`, `request`) and a `durability` score (0–1). Only `fact` candidates with durability at or above `RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD` (default 0.7, option `semanticMemoryDurabilityThreshold`) are saved; the rest appear in the turn's `skipped` list as `not_a_fact` or `low_durability`.
+
+### Episodic memory
+
+Episodic memory holds dated records of past events and conversations (see ADR 0002: the stored messages are the transcript, not episodic memory). There are two kinds:
+
+- **Event episodes.** When the extractor labels a candidate `kind = event` with durability at or above `RECALL_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD` (default 0.3, option `episodicMemoryEventDurabilityThreshold`), it is saved as an episode with its `occurredAt` date. The turn result lists them in `savedEpisodes`.
+- **Conversation episodes.** `conversations.end(scope, conversationId)` summarizes a conversation into one dated episode and marks it ended; it is idempotent. `conversations.create` first finishes the user's earlier unended conversations on a best-effort basis and reports the result in `finishedConversations`.
+
+Each turn's prompt also gets the most relevant episodes, with their dates: at most `RECALL_EPISODIC_MEMORY_TOP_K` (default 3, option `episodicMemoryTopK`) with a score of at least `RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD` (default 0.5, option `episodicMemoryScoreThreshold`). Episodes are stored in PostgreSQL and indexed in the Qdrant collection `QDRANT_EPISODE_COLLECTION` (default `episodes`). Use `episodicMemory.retrieve` and `episodicMemory.list` to read them directly.
  The semantic-memory group supports direct fact storage with a source message, lookup by ID, scoped retrieval, and explicit extraction for workflows outside the automatic turn flow.
 
 ## Redis working memory

@@ -144,6 +144,7 @@ describe("ConversationTurnMemoryService", () => {
       category: SemanticMemoryCategory.preference,
       kind: "fact",
       durability: 0.9,
+      occurredAt: null,
     };
     const automaticMemory = new AutomaticSemanticMemoryService({
       async extract(input) {
@@ -296,7 +297,7 @@ describe("ConversationTurnMemoryService", () => {
       createPromptBuilder([]),
       {
         async extractAndSave() {
-          return { extracted: [], saved: [], skipped: [], supersededMemoryIds: [] };
+          return { extracted: [], saved: [], savedEpisodes: [], skipped: [], supersededMemoryIds: [] };
         },
       },
     );

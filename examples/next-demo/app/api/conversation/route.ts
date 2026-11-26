@@ -1,5 +1,5 @@
 import { getDemoScope } from "@/lib/demo-identity";
-import { activateConversation } from "@/lib/demo-state";
+import { activateConversation, readDemoState } from "@/lib/demo-state";
 import { getRecallEngine } from "@/lib/recall";
 
 export const runtime = "nodejs";
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 /**
  * Starts a new conversation, or switches to an earlier one when `conversationId` is given.
  * Either way the Redis task notes are cleared (they belong to the active task); semantic facts are kept.
+ * Starting a new conversation first ends the current one, turning it into a conversation episode.
  */
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -22,6 +23,9 @@ export async function POST(request: Request): Promise<Response> {
       }
       conversationId = body.conversationId;
     } else {
+      const { conversationId: current } = await readDemoState();
+      // Best-effort: create() also finishes any unended conversation it can.
+      if (current) await recall.conversations.end(scope, current).catch(() => undefined);
       conversationId = (await recall.conversations.create(scope, "Memory Lab conversation")).id;
     }
 
