@@ -635,11 +635,20 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 type MemoryLayer = "working" | "episodic" | "semantic";
+type Episode = {
+  id: string;
+  type: "event" | "conversation";
+  content: string;
+  occurredAt: string | null;
+  sourceConversationId: string;
+  createdAt: string;
+};
 type SummaryVersion = NonNullable<Summary> & { id: string; createdAt: string };
 type LayerData =
   | { layer: "working"; items: Note[]; tokenUsage: number; tokenBudget: number }
   | {
     layer: "episodic";
+    episodes: Episode[];
     messageCount: number;
     userMessageCount: number;
     assistantMessageCount: number;
@@ -691,7 +700,7 @@ function MemoryPanel({ conversationId, messageCount, factCount }: { conversation
   if (!layer) return <Placeholder title="Loading">Reading memory stores…</Placeholder>;
   const counts: Record<MemoryLayer, number | null> = {
     working: noteCount,
-    episodic: messageCount ?? null,
+    episodic: null,
     semantic: factCount ?? null,
   };
 
@@ -736,7 +745,23 @@ function EpisodicLayer({ data }: { data: Extract<LayerData, { layer: "episodic" 
   const summary = data.latestSummary;
   return (
     <>
-      <Section title="Episodic memory" aside={`postgres · ${data.messageCount} msgs`}>
+      <Section title="Episodic memory" aside={`postgres + qdrant · ${data.episodes.length}`}>
+        {data.episodes.length === 0 ? (
+          <Empty>No episodes yet. Mention an event, e.g. “I won a race yesterday”.</Empty>
+        ) : (
+          <ul>
+            {data.episodes.map((episode) => (
+              <Row
+                key={episode.id}
+                main={episode.content}
+                side={<Tag>{episode.type}</Tag>}
+                sub={<span>{episode.occurredAt ? episode.occurredAt.slice(0, 10) : "date unknown"} · saved {timeAgo(episode.createdAt)}</span>}
+              />
+            ))}
+          </ul>
+        )}
+      </Section>
+      <Section title="Transcript" aside={`postgres · ${data.messageCount} msgs`}>
         {data.messageCount === 0 ? <Empty>No messages in this conversation yet.</Empty> : (
           <dl className="mb-4 grid grid-cols-3 divide-x divide-neutral-100 rounded-xl border border-neutral-200/80">
             <Stat label="Messages" value={data.messageCount} />
@@ -753,10 +778,10 @@ function EpisodicLayer({ data }: { data: Extract<LayerData, { layer: "episodic" 
               <Markdown className="prose-sm text-[13px]">{summary.summaryText}</Markdown>
             </div>
           </>
-        ) : data.messageCount > 0 && <Empty>No summary yet — the full transcript still fits in the context budget.</Empty>}
+        ) : data.messageCount > 0 && <Empty>Not compacted. Long chats (over the token budget) get their older messages summarized here; that is separate from episodic memory above.</Empty>}
       </Section>
       {data.earlierSummaries.length > 0 && (
-        <Section title="Earlier summaries" aside={data.earlierSummaries.length}>
+        <Section title="Earlier compaction summaries" aside={data.earlierSummaries.length}>
           <ul>
             {data.earlierSummaries.map((version) => (
               <Row

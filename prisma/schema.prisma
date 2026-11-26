@@ -20,6 +20,11 @@ enum SemanticMemoryCategory {
   project_fact
 }
 
+enum EpisodeType {
+  event
+  conversation
+}
+
 enum SemanticMemoryStatus {
   active
   superseded
@@ -40,6 +45,7 @@ model User {
   tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   sessions         Session[]
   semanticMemories SemanticMemory[]
+  episodes         Episode[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalId])
@@ -75,6 +81,7 @@ model Conversation {
   messages                 ConversationMessage[]
   summaries                ConversationSummary[]
   semanticMemories         SemanticMemory[]      @relation("SemanticMemoryConversation")
+  episodes                 Episode[]             @relation("EpisodeConversation")
 
   @@id([tenantId, id])
   @@unique([tenantId, userId, id])
@@ -92,6 +99,7 @@ model ConversationMessage {
   createdAt        DateTime         @default(now()) @db.Timestamptz(6)
   conversation     Conversation     @relation(fields: [tenantId, conversationId], references: [tenantId, id], onDelete: Cascade)
   semanticMemories SemanticMemory[] @relation("SemanticMemorySourceMessage")
+  episodes         Episode[]        @relation("EpisodeSourceMessage")
 
   @@unique([tenantId, conversationId, sequenceNo])
   @@unique([tenantId, conversationId, id])
@@ -130,4 +138,31 @@ model SemanticMemory {
   @@index([tenantId, userId, status, createdAt])
   @@index([tenantId, sourceConversationId, sourceMessageId])
   @@index([tenantId, userId, supersedesMemoryId])
+}
+
+/// Episodic memory: a dated record of a past event or conversation, cited to the transcript.
+model Episode {
+  id                   String               @id @default(uuid()) @db.Uuid
+  tenantId             String               @db.Uuid
+  userId               String               @db.Uuid
+  type                 EpisodeType
+  content              String               @db.Text
+  /// Event date, or the conversation's start time. Null when an event has no clear date.
+  occurredAt           DateTime?            @db.Timestamptz(6)
+  /// Conversation episodes: time of the last summarized message.
+  endedAt              DateTime?            @db.Timestamptz(6)
+  sourceConversationId String               @db.Uuid
+  /// Event episodes: the user message the event was extracted from.
+  sourceMessageId      String?              @db.Uuid
+  /// Conversation episodes: last transcript sequence number covered.
+  throughSequenceNo    Int?
+  /// Normalized content, used to skip duplicate events from the same message.
+  dedupeKey            String
+  createdAt            DateTime             @default(now()) @db.Timestamptz(6)
+  user                 User                 @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  sourceConversation   Conversation         @relation("EpisodeConversation", fields: [tenantId, userId, sourceConversationId], references: [tenantId, userId, id], onDelete: Cascade)
+  sourceMessage        ConversationMessage? @relation("EpisodeSourceMessage", fields: [tenantId, sourceConversationId, sourceMessageId], references: [tenantId, conversationId, id], onDelete: Cascade)
+
+  @@unique([tenantId, sourceConversationId, type, dedupeKey])
+  @@index([tenantId, userId, createdAt])
 }

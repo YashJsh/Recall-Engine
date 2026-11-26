@@ -48,6 +48,7 @@ describe("AutomaticSemanticMemoryService", () => {
       category: SemanticMemoryCategory.preference,
       kind: "fact",
       durability: 0.9,
+      occurredAt: null,
       sourceMessageId: owner.sourceMessageId,
     };
     const service = new AutomaticSemanticMemoryService(
@@ -58,6 +59,7 @@ describe("AutomaticSemanticMemoryService", () => {
           category: SemanticMemoryCategory.preference,
           kind: "fact",
           durability: 0.9,
+          occurredAt: null,
           sourceMessageId: owner.sourceMessageId,
         },
         { ...fact, content: "  THE USER WANTS TO USE REDIS DIRECTLY FOR WORKING MEMORY.  " },
@@ -94,6 +96,7 @@ describe("AutomaticSemanticMemoryService", () => {
         category: SemanticMemoryCategory.profile,
         kind: "fact",
         durability: 0.9,
+        occurredAt: null,
         sourceMessageId: "assistant-message",
       }] },
       semanticMemory,
@@ -120,6 +123,7 @@ describe("AutomaticSemanticMemoryService", () => {
       category: SemanticMemoryCategory.preference,
       kind,
       durability,
+      occurredAt: null,
       sourceMessageId: owner.sourceMessageId,
     });
     const service = new AutomaticSemanticMemoryService(

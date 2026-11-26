@@ -38,11 +38,12 @@ describe("GroqSemanticFactExtractor", () => {
       category: "preference",
       kind: "fact",
       durability: 0.85,
+      occurredAt: "",
       sourceMessageId: "user-2",
     };
     const extractor = extractorReturning(JSON.stringify({ facts: [candidate] }));
 
-    assert.deepEqual(await extractor.extract(confirmationInput), [candidate]);
+    assert.deepEqual(await extractor.extract(confirmationInput), [{ ...candidate, occurredAt: null }]);
   });
 
   it("sends context, target and the current date separately", async () => {
@@ -55,6 +56,7 @@ describe("GroqSemanticFactExtractor", () => {
 
     assert.deepEqual(request, {
       currentDate: "2026-11-25",
+      currentWeekday: "Wednesday",
       context: confirmationInput.context,
       target: confirmationInput.target,
     });
@@ -78,12 +80,31 @@ describe("GroqSemanticFactExtractor", () => {
     assert.match(systemPrompt, /Do not output.*confirmation/i);
   });
 
+  it("parses an event's occurredAt as a UTC date and asks the model for it", async () => {
+    let systemPrompt = "";
+    const extractor = extractorReturning(JSON.stringify({ facts: [{
+      content: "The user won first prize in a 15km marathon on 2026-11-24.",
+      category: "profile",
+      kind: "event",
+      durability: 0.4,
+      occurredAt: "2026-11-24",
+      sourceMessageId: "user-2",
+    }] }), (params) => { systemPrompt = params.messages[0]?.content as string; });
+
+    const [event] = await extractor.extract(confirmationInput);
+
+    assert.equal(event?.occurredAt?.toISOString(), "2026-11-24T00:00:00.000Z");
+    assert.match(systemPrompt, /occurredAt/);
+    assert.match(systemPrompt, /coffee.*trivial/i);
+  });
+
   it("rejects a candidate that cites a context message instead of the target", async () => {
     const extractor = extractorReturning(JSON.stringify({ facts: [{
       content: "The user asked which store to use.",
       category: "project_fact",
       kind: "fact",
       durability: 0.9,
+      occurredAt: "",
       sourceMessageId: "user-1",
     }] }));
 
@@ -118,6 +139,7 @@ describe("GroqSemanticFactExtractor", () => {
       category: "profile",
       kind: "fact",
       durability: 0.9,
+      occurredAt: "",
       sourceMessageId: "user-1",
     };
     const withFact = (fact: Record<string, unknown>) => extractorReturning(JSON.stringify({ facts: [fact] }));
@@ -127,5 +149,7 @@ describe("GroqSemanticFactExtractor", () => {
     await assert.rejects(withFact({ ...base, kind: "opinion" }).extract(input), /invalid semantic fact candidate/);
     await assert.rejects(withFact({ ...base, durability: 1.5 }).extract(input), /invalid semantic fact candidate/);
     await assert.rejects(withFact({ ...base, durability: "high" }).extract(input), /invalid semantic fact candidate/);
+    await assert.rejects(withFact({ ...base, occurredAt: "yesterday" }).extract(input), /invalid semantic fact candidate/);
+    await assert.rejects(withFact({ ...base, occurredAt: "2026-02-30" }).extract(input), /invalid semantic fact candidate/);
   });
 });

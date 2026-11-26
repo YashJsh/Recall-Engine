@@ -34,18 +34,22 @@ export async function GET(request: NextRequest) {
 
     if (layer === "episodic") {
       const conversationId = state.conversationId;
-      const [messages, summaryVersions] = conversationId
-        ? await Promise.all([
-            recall.conversations.listMessages(scope, conversationId),
-            recall.conversations.listSummaryVersions(scope, conversationId),
-          ])
-        : [[], []];
+      const [episodes, [messages, summaryVersions]] = await Promise.all([
+        recall.episodicMemory.list({ tenantId: scope.tenantId, userId: scope.userId }, { limit: 50 }),
+        conversationId
+          ? Promise.all([
+              recall.conversations.listMessages(scope, conversationId),
+              recall.conversations.listSummaryVersions(scope, conversationId),
+            ])
+          : Promise.resolve([[], []] as const),
+      ]);
       const latest = summaryVersions.reduce<(typeof summaryVersions)[number] | null>(
         (best, summary) => (!best || summary.version > best.version ? summary : best),
         null,
       );
       return NextResponse.json({
         layer,
+        episodes,
         messageCount: messages.length,
         userMessageCount: messages.filter((m) => m.role === "user").length,
         assistantMessageCount: messages.filter((m) => m.role === "assistant").length,

@@ -137,6 +137,8 @@ describe("Recall Engine public API", () => {
       assert.equal(tracedFact?.sourceMessageId, messages[0]?.id);
       assert.deepEqual(otherUserMatches, []);
 
+      assert.deepEqual(await engine.episodicMemory.list({ tenantId: scope.tenantId, userId: scope.userId }), []);
+
       const expiringScope = { ...scope, sessionId: randomUUID() };
       await engine.workingMemory.addItem(expiringScope, {
         id: "expires",
