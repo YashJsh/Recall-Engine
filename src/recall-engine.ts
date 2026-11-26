@@ -29,20 +29,13 @@ import { RedisWorkingMemory, type WorkingMemoryOptions } from "./working-memory.
 import { EpisodeStore, type EpisodeRecord } from "./episode-store.js";
 import { EpisodeVectorStore } from "./episode-vector-store.js";
 import { EpisodeRetrievalService } from "./episode-retrieval.js";
-import {
-  ConversationEpisodeService,
-  IndexedEpisodeWriter,
-  type EpisodeSummaryGenerator,
-  type EpisodeSummaryInput,
-} from "./episodic-memory-service.js";
-import { GroqEpisodeSummarizer } from "./providers/groq-episode-summarizer.js";
+import { IndexedEpisodeWriter } from "./episodic-memory-service.js";
 import { FastEmbedTextEmbedder } from "./semantic-memory-vector-store.js";
 import type {
   RecallContextCompactionResult,
   RecallAutomaticSemanticMemoryResult,
   RecallCompletedTurn,
-  RecallConversationEndResult,
-  RecallCreatedConversation,
+  RecallConversation,
   RecallEpisode,
   RecallRetrievedEpisode,
   RecallConversationOverview,
@@ -68,7 +61,7 @@ const DEFAULT_SEMANTIC_MEMORY_SCORE_THRESHOLD = 0.5;
 const DEFAULT_SEMANTIC_MEMORY_DURABILITY_THRESHOLD = 0.7;
 const DEFAULT_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD = 0.3;
 const DEFAULT_EPISODIC_MEMORY_TOP_K = 3;
-const DEFAULT_EPISODIC_MEMORY_SCORE_THRESHOLD = 0.5;
+const DEFAULT_EPISODIC_MEMORY_SCORE_THRESHOLD = 0.6;
 const CLIENT_NAME = "recall-engine";
 
 export class RecallEngineConnectionError extends Error {
@@ -106,12 +99,6 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
     });
     const episodeWriter = new IndexedEpisodeWriter(episodeStore, episodeVectorStore);
     const episodeRetrieval = new EpisodeRetrievalService(episodeStore, episodeVectorStore);
-    const conversationEpisodes = new ConversationEpisodeService(
-      episodicMemory,
-      episodeStore,
-      episodeWriter,
-      new LazyEpisodeSummarizer(),
-    );
 
     const automaticMemory = new LazyAutomaticSemanticMemoryService(
       semanticStore,
@@ -150,7 +137,6 @@ export async function connectRecallEngine(options: RecallEngineOptions = {}): Pr
       automaticMemory,
       episodeStore,
       episodeRetrieval,
-      conversationEpisodes,
       close: () => closeClients(prisma, redis),
     });
   } catch (error) {
@@ -172,7 +158,6 @@ interface EngineDependencies {
   automaticMemory: LazyAutomaticSemanticMemoryService;
   episodeStore: EpisodeStore;
   episodeRetrieval: EpisodeRetrievalService;
-  conversationEpisodes: ConversationEpisodeService;
   close: () => Promise<void>;
 }
 
@@ -181,19 +166,8 @@ function createPublicEngine(dependencies: EngineDependencies): RecallEngine {
 
   return {
     conversations: {
-      async create(scope, title): Promise<RecallCreatedConversation> {
-        const finishedConversations = await dependencies.conversationEpisodes
-          .finishPrevious({ tenantId: scope.tenantId, userId: scope.userId })
-          .catch((error: unknown) => ({
-            ended: [],
-            failed: [{ conversationId: "*", error: error instanceof Error ? error.message : String(error) }],
-          }));
-        const conversation = await dependencies.episodicMemory.createConversation(scope, title);
-        return { ...conversation, finishedConversations };
-      },
-      async end(scope, conversationId): Promise<RecallConversationEndResult> {
-        const result = await dependencies.conversationEpisodes.end(scope, conversationId);
-        return { status: result.status, episode: result.episode ? toPublicEpisode(result.episode) : null };
+      async create(scope, title): Promise<RecallConversation> {
+        return dependencies.episodicMemory.createConversation(scope, title);
       },
       async list(scope): Promise<RecallConversationOverview[]> {
         return dependencies.episodicMemory.listConversations(scope);
@@ -303,15 +277,6 @@ class LazySummaryGenerator implements SummaryGenerator {
   generate(input: SummaryGenerationInput): Promise<string> {
     this.generator ??= new GroqSummaryGenerator();
     return this.generator.generate(input);
-  }
-}
-
-class LazyEpisodeSummarizer implements EpisodeSummaryGenerator {
-  private summarizer?: GroqEpisodeSummarizer;
-
-  summarize(input: EpisodeSummaryInput): Promise<string> {
-    this.summarizer ??= new GroqEpisodeSummarizer();
-    return this.summarizer.summarize(input);
   }
 }
 

@@ -747,7 +747,7 @@ function EpisodicLayer({ data }: { data: Extract<LayerData, { layer: "episodic" 
     <>
       <Section title="Episodic memory" aside={`postgres + qdrant · ${data.episodes.length}`}>
         {data.episodes.length === 0 ? (
-          <Empty>No episodes yet. Mention an event (e.g. “I won a race yesterday”), or start a new conversation to turn this one into an episode.</Empty>
+          <Empty>No episodes yet. Mention an event, e.g. “I won a race yesterday”.</Empty>
         ) : (
           <ul>
             {data.episodes.map((episode) => (
@@ -778,7 +778,7 @@ function EpisodicLayer({ data }: { data: Extract<LayerData, { layer: "episodic" 
               <Markdown className="prose-sm text-[13px]">{summary.summaryText}</Markdown>
             </div>
           </>
-        ) : data.messageCount > 0 && <Empty>No compaction summary yet — the full transcript still fits in the context budget.</Empty>}
+        ) : data.messageCount > 0 && <Empty>Not compacted. Long chats (over the token budget) get their older messages summarized here; that is separate from episodic memory above.</Empty>}
       </Section>
       {data.earlierSummaries.length > 0 && (
         <Section title="Earlier compaction summaries" aside={data.earlierSummaries.length}>

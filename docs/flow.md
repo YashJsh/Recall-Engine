@@ -9,7 +9,7 @@
 3. **Retrieve semantic facts** (`src/semantic-memory-retrieval.ts`):
    - Embed the user message and search Qdrant.
    - Keep the top 5 with similarity ≥ 0.5, then load their text from Postgres.
-4. **Retrieve episodes** (`src/episode-retrieval.ts`): the top 3 episodes with similarity ≥ 0.5, from the Qdrant `episodes` collection, then verified in Postgres.
+4. **Retrieve episodes** (`src/episode-retrieval.ts`): the top 3 episodes with similarity ≥ 0.6, from the Qdrant `episodes` collection, then verified in Postgres.
 5. **Build the prompt** (`src/conversation-prompt-builder.ts`): system prompt + retrieved facts + dated episodes + history + the new message.
 
 ## Step 2: the host app calls its own LLM (`examples/next-demo/lib/chat-handler.ts`)
@@ -34,12 +34,6 @@
    - supersede: replace the old fact
 4. **Save** to Postgres `SemanticMemory` and index it in Qdrant.
 
-## Step 4: finishing a conversation (`src/episodic-memory-service.ts`)
-- `conversations.end()`, or lazily on `conversations.create()` for earlier unended conversations:
-  - one LLM call summarizes the transcript into a dated **conversation episode**
-  - the episode is indexed, then the conversation is marked ended
-- Empty conversations are marked ended without an episode. A failure leaves the conversation unended, so it is retried later.
-
 ## Where each layer gets written
 
 | Layer | Written by | When |
@@ -49,9 +43,9 @@
 | Compaction summaries (Postgres) | compactor | only when history is over 12k tokens |
 | Semantic (Postgres + Qdrant) | extractor | every turn |
 | Episodic, events (Postgres + Qdrant) | extractor | every turn with an event |
-| Episodic, conversations (Postgres + Qdrant) | episode summarizer | when a conversation ends |
 
 ## Known gaps
+- **No conversation episodes yet.** Summarizing finished conversations was removed for now; only events become episodes.
 - **Date-range questions** ("what happened last week?") rely on relevance search only; there is no date filter.
 - **Working memory depends on the chat model choosing to call a tool.**
 

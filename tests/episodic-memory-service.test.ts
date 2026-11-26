@@ -8,11 +8,7 @@ import { EpisodeRetrievalService } from "../src/episode-retrieval.js";
 import { EpisodeStore } from "../src/episode-store.js";
 import type { EpisodeVectorInput } from "../src/episode-vector-store.js";
 import { EpisodicMemory, type ConversationScope } from "../src/episodic-memory.js";
-import {
-  ConversationEpisodeService,
-  IndexedEpisodeWriter,
-  type EpisodeSummaryInput,
-} from "../src/episodic-memory-service.js";
+import { IndexedEpisodeWriter } from "../src/episodic-memory-service.js";
 import { createPostgresClient } from "../src/postgres-client.js";
 import type { SemanticFactCandidate } from "../src/semantic-fact-extractor.js";
 import { AutomaticSemanticMemoryService } from "../src/semantic-memory-extraction-service.js";
@@ -32,16 +28,6 @@ class FakeEpisodeIndex {
     return this.indexed
       .filter((episode) => episode.tenantId === scope.tenantId && episode.userId === scope.userId)
       .map((episode) => ({ episodeId: episode.id, score: 0.9 }));
-  }
-}
-
-class FakeSummarizer {
-  readonly inputs: EpisodeSummaryInput[] = [];
-  failing = false;
-  async summarize(input: EpisodeSummaryInput) {
-    this.inputs.push(input);
-    if (this.failing) throw new Error("summarizer unavailable");
-    return `On ${input.startedOn}, the user discussed ${input.messages[0]?.content ?? "nothing"}.`;
   }
 }
 
@@ -68,10 +54,8 @@ async function conversationWith(scope: ConversationScope, contents: string[]) {
 
 function services() {
   const index = new FakeEpisodeIndex();
-  const summarizer = new FakeSummarizer();
   const writer = new IndexedEpisodeWriter(episodeStore, index);
-  const conversations = new ConversationEpisodeService(transcript, episodeStore, writer, summarizer);
-  return { index, summarizer, writer, conversations };
+  return { index, writer };
 }
 
 const userScope = (scope: ConversationScope) => ({ tenantId: scope.tenantId, userId: scope.userId });
@@ -145,102 +129,27 @@ describe("Event episodes", () => {
   });
 });
 
-describe("Conversation episodes", () => {
-  it("ends a conversation into one dated episode and is idempotent", async () => {
-    const owner = await createOwner();
-    const { index, summarizer, conversations } = services();
-    const { conversation, messages } = await conversationWith(owner.scope, ["Debug my AWS deploy.", "Check env var names."]);
-
-    try {
-      const first = await conversations.end(owner.scope, conversation.id);
-      const second = await conversations.end(owner.scope, conversation.id);
-
-      assert.equal(first.status, "ended");
-      assert.equal(first.episode?.type, "conversation");
-      assert.match(first.episode?.content ?? "", /Debug my AWS deploy/);
-      assert.equal(first.episode?.occurredAt?.toISOString(), conversation.startedAt.toISOString());
-      assert.equal(first.episode?.throughSequenceNo, messages.at(-1)?.sequenceNo);
-      assert.deepEqual(summarizer.inputs[0]?.messages.map(({ role }) => role), ["user", "assistant"]);
-      assert.equal(second.status, "already_ended");
-      assert.equal(second.episode?.id, first.episode?.id);
-      assert.equal(summarizer.inputs.length, 1);
-      assert.equal(index.indexed.length, 1);
-      assert.ok((await transcript.getConversation(owner.scope, conversation.id))?.endedAt);
-    } finally {
-      await prisma.tenant.delete({ where: { id: owner.tenantId } });
-    }
-  });
-
-  it("ends an empty conversation without an episode", async () => {
-    const owner = await createOwner();
-    const { summarizer, conversations } = services();
-    const conversation = await transcript.createConversation(owner.scope);
-    try {
-      const result = await conversations.end(owner.scope, conversation.id);
-      assert.deepEqual(result, { status: "ended", episode: null });
-      assert.equal(summarizer.inputs.length, 0);
-    } finally {
-      await prisma.tenant.delete({ where: { id: owner.tenantId } });
-    }
-  });
-
-  it("leaves a conversation unended when summarizing fails, so a later call retries", async () => {
-    const owner = await createOwner();
-    const { summarizer, conversations } = services();
-    const { conversation } = await conversationWith(owner.scope, ["Plan my trip."]);
-    try {
-      summarizer.failing = true;
-      await assert.rejects(conversations.end(owner.scope, conversation.id), /summarizer unavailable/);
-      assert.equal((await transcript.getConversation(owner.scope, conversation.id))?.endedAt, null);
-
-      summarizer.failing = false;
-      assert.equal((await conversations.end(owner.scope, conversation.id)).status, "ended");
-    } finally {
-      await prisma.tenant.delete({ where: { id: owner.tenantId } });
-    }
-  });
-
-  it("finishes the user's earlier unended conversations across sessions and reports failures", async () => {
-    const owner = await createOwner();
-    const otherSession = await prisma.session.create({
-      data: { tenantId: owner.tenantId, userId: owner.scope.userId, externalId: randomUUID() },
-    });
-    const otherScope = { ...owner.scope, sessionId: otherSession.id };
-    const { summarizer, conversations } = services();
-    const a = await conversationWith(owner.scope, ["First chat."]);
-    const b = await conversationWith(otherScope, ["Second chat."]);
-    const empty = await transcript.createConversation(owner.scope);
-    try {
-      const finished = await conversations.finishPrevious(userScope(owner.scope));
-
-      assert.deepEqual(
-        new Set(finished.ended.map(({ conversationId }) => conversationId)),
-        new Set([a.conversation.id, b.conversation.id, empty.id]),
-      );
-      assert.equal(finished.ended.find(({ conversationId }) => conversationId === empty.id)?.episodeId, null);
-      assert.deepEqual(finished.failed, []);
-      assert.equal(summarizer.inputs.length, 2);
-
-      const c = await conversationWith(owner.scope, ["Third chat."]);
-      summarizer.failing = true;
-      const failing = await conversations.finishPrevious(userScope(owner.scope));
-      assert.deepEqual(failing.failed.map(({ conversationId }) => conversationId), [c.conversation.id]);
-    } finally {
-      await prisma.tenant.delete({ where: { id: owner.tenantId } });
-    }
-  });
-});
-
 describe("Episode retrieval", () => {
   it("adds retrieved episodes with dates to the prompt, separately from facts, and never across users", async () => {
     const owner = await createOwner();
     const stranger = await createOwner();
-    const { index, conversations } = services();
-    const { conversation } = await conversationWith(owner.scope, ["We fixed the AWS deploy."]);
-    const strangerChat = await conversationWith(stranger.scope, ["Stranger chat."]);
+    const { index, writer } = services();
+    const { conversation, messages } = await conversationWith(owner.scope, ["We fixed the AWS deploy on Friday."]);
+    const strangerChat = await conversationWith(stranger.scope, ["I fixed my deploy too."]);
+    const fixedOn = new Date("2026-11-20T00:00:00Z");
     try {
-      await conversations.end(owner.scope, conversation.id);
-      await conversations.end(stranger.scope, strangerChat.conversation.id);
+      await writer.saveEvent(userScope(owner.scope), {
+        content: "The user fixed the AWS deploy on 2026-11-20.",
+        occurredAt: fixedOn,
+        sourceConversationId: conversation.id,
+        sourceMessageId: messages[0]!.id,
+      });
+      await writer.saveEvent(userScope(stranger.scope), {
+        content: "The stranger fixed a deploy.",
+        occurredAt: null,
+        sourceConversationId: strangerChat.conversation.id,
+        sourceMessageId: strangerChat.messages[0]!.id,
+      });
       const retrieval = new EpisodeRetrievalService(episodeStore, index);
       const current = await transcript.createConversation(owner.scope);
       await transcript.appendMessage(owner.scope, current.id, { role: MessageRole.user, content: "When did we fix the deploy?" });
@@ -257,7 +166,7 @@ describe("Episode retrieval", () => {
       );
 
       const built = await builder.build(owner.scope, current.id, "System.", "When did we fix the deploy?");
-      const date = conversation.startedAt.toISOString().slice(0, 10);
+      const date = "2026-11-20";
 
       assert.equal(built.episodes.length, 1);
       assert.equal(built.episodes[0]?.sourceConversationId, conversation.id);

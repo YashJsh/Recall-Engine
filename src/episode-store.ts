@@ -3,7 +3,6 @@ import { EpisodeType, MessageRole } from "./generated/prisma/enums.js";
 import type { SemanticMemoryScope } from "./semantic-memory.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CONVERSATION_DEDUPE_KEY = "conversation";
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 
@@ -17,14 +16,6 @@ export interface CreateEventEpisodeInput {
   occurredAt: Date | null;
   sourceConversationId: string;
   sourceMessageId: string;
-}
-
-export interface CreateConversationEpisodeInput {
-  content: string;
-  occurredAt: Date;
-  endedAt: Date;
-  sourceConversationId: string;
-  throughSequenceNo: number;
 }
 
 export class EpisodeSourceError extends Error {
@@ -70,48 +61,11 @@ export class EpisodeStore {
     });
   }
 
-  /** Returns null when the conversation already has an episode. */
-  async createConversationEpisode(
-    scope: EpisodeScope,
-    input: CreateConversationEpisodeInput,
-  ): Promise<EpisodeRecord | null> {
-    this.validateScope(scope);
-    if (!input.content.trim()) throw new Error("content must not be empty");
-    if (!Number.isInteger(input.throughSequenceNo) || input.throughSequenceNo < 1) {
-      throw new Error("throughSequenceNo must be a positive integer");
-    }
-    if (!UUID_PATTERN.test(input.sourceConversationId)) throw new EpisodeSourceError();
-
-    return this.createUnlessDuplicate({
-      tenantId: scope.tenantId,
-      userId: scope.userId,
-      type: EpisodeType.conversation,
-      content: input.content.trim(),
-      occurredAt: input.occurredAt,
-      endedAt: input.endedAt,
-      sourceConversationId: input.sourceConversationId,
-      throughSequenceNo: input.throughSequenceNo,
-      dedupeKey: CONVERSATION_DEDUPE_KEY,
-    });
-  }
-
   getById(scope: EpisodeScope, episodeId: string): Promise<EpisodeRecord | null> {
     this.validateScope(scope);
     if (!UUID_PATTERN.test(episodeId)) return Promise.resolve(null);
     return this.prisma.episode.findFirst({
       where: { id: episodeId, tenantId: scope.tenantId, userId: scope.userId },
-    });
-  }
-
-  getConversationEpisode(scope: EpisodeScope, conversationId: string): Promise<EpisodeRecord | null> {
-    this.validateScope(scope);
-    return this.prisma.episode.findFirst({
-      where: {
-        tenantId: scope.tenantId,
-        userId: scope.userId,
-        sourceConversationId: conversationId,
-        type: EpisodeType.conversation,
-      },
     });
   }
 

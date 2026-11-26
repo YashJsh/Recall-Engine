@@ -25,6 +25,7 @@ export interface RecallConversation {
   startedAt: Date;
 }
 
+/** Only "event" episodes are created for now; conversation episodes are planned. */
 export type RecallEpisodeType = "event" | "conversation";
 
 /** Episodic memory: a dated record of a past event or conversation, cited to the transcript. */
@@ -58,22 +59,6 @@ export interface RecallRetrievedEpisode {
 export interface RecallEpisodeRetrievalOptions {
   limit?: number;
   scoreThreshold?: number;
-}
-
-export interface RecallConversationEndResult {
-  status: "ended" | "already_ended";
-  /** Null when the conversation had no messages. */
-  episode: RecallEpisode | null;
-}
-
-/** Earlier unended conversations finished (best-effort) when a new conversation was created. */
-export interface RecallFinishedConversations {
-  ended: Array<{ conversationId: string; episodeId: string | null }>;
-  failed: Array<{ conversationId: string; error: string }>;
-}
-
-export interface RecallCreatedConversation extends RecallConversation {
-  finishedConversations: RecallFinishedConversations;
 }
 
 export interface RecallConversationOverview extends RecallConversation {
@@ -273,7 +258,7 @@ export interface RecallEngineOptions {
   episodicMemoryTopK?: number;
   /**
    * Minimum relevance score (0–1) for an episode to enter the prompt.
-   * Defaults to RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD or 0.5.
+   * Defaults to RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD or 0.6.
    */
   episodicMemoryScoreThreshold?: number;
 }
@@ -285,13 +270,7 @@ export interface RecallSemanticMemoryRetrievalOptions {
 
 export interface RecallEngine {
   conversations: {
-    /**
-     * Creates a conversation. First, best-effort, finishes the user's earlier unended
-     * conversations into episodes; failures are reported, never thrown.
-     */
-    create(scope: RecallMemoryScope, title?: string): Promise<RecallCreatedConversation>;
-    /** Summarizes the conversation into an episode and marks it ended. Idempotent. */
-    end(scope: RecallMemoryScope, conversationId: string): Promise<RecallConversationEndResult>;
+    create(scope: RecallMemoryScope, title?: string): Promise<RecallConversation>;
     /** The scope's conversations, most recent activity first. */
     list(scope: RecallMemoryScope): Promise<RecallConversationOverview[]>;
     prepareTurn(input: PrepareTurnInput): Promise<RecallPreparedTurn>;

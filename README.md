@@ -1,138 +1,239 @@
 # Recall Engine
 
-Recall Engine is being built incrementally as reusable memory infrastructure for AI agents.
+**Memory infrastructure for AI agents.** Recall Engine is a TypeScript library that a host application imports so its assistant can remember: what is happening right now, what happened before, and what is true about the user. The host app keeps full control of its own chat model. Recall Engine handles storing, extracting and recalling memory around each turn.
 
-## Current slices
+## What we are building
 
-- Redis-backed working memory with token budgets, priority eviction, protected items, and session TTL.
-- PostgreSQL episodic memory for tenant-scoped sessions, conversations, exact message history, and versioned summaries.
+An agent that feels like it *knows* you: it remembers your preferences, recalls what happened to you and when, and keeps track of the task in hand, without the host app writing any memory logic.
 
-## Local PostgreSQL
+The design is modelled on how people remember:
 
-Copy `.env.example` to `.env`, then run:
+| Layer | What it holds | Example | Lifetime | Store |
+|---|---|---|---|---|
+| **Working memory** | State of the current task | "Drafting the API section of https://example.com/spec" | Minutes (30 min TTL) | Redis |
+| **Episodic memory** | Dated events in the user's life | "Broke their leg on 2026-11-26, bedridden ~2 months" | Long-term | Postgres + Qdrant |
+| **Semantic memory** | Lasting facts and preferences | "The user is vegetarian" | Long-term, can be superseded | Postgres + Qdrant |
+| **Transcript** *(not a memory)* | Every message, verbatim; the source of truth that memories cite | the raw chat | Permanent | Postgres |
+
+The transcript is kept separate from episodic memory on purpose: messages are evidence, while episodes are distilled, dated memories that cite that evidence.
+
+## What we have built
+
+| Capability | Status |
+|---|---|
+| Transcript: ordered, tenant-scoped messages with safe concurrent appends | ✅ |
+| Context compaction: summarizes old messages when a chat outgrows the token budget | ✅ |
+| Working memory: Redis notes with a token budget, priority eviction and TTL | ✅ |
+| Semantic memory: automatic fact extraction, de-duplication and supersession | ✅ |
+| Write gate: the extractor classifies each candidate (`fact` / `event` / `task` / `request`) and scores its durability, so only memories worth keeping are saved | ✅ |
+| Episodic memory: event episodes with absolute dates ("last Friday" → `2026-11-20`) | ✅ |
+| Recall: relevant facts and dated episodes injected into every prompt | ✅ |
+| Memory Lab: a Next.js demo for watching memory turn by turn | ✅ |
+| Conversation episodes: a dated summary of each finished conversation | ⏳ planned |
+| Automatic routing of `task` items into working memory | ⏳ planned |
+| Date-range recall ("what happened last week?") | ⏳ planned |
+
+## Architecture
+
+### Components
+
+```mermaid
+flowchart LR
+  subgraph Host["Host application"]
+    UI[Chat UI] --> API[Chat handler]
+    API --> LLM[Host chat model]
+  end
+
+  subgraph Recall["Recall Engine (in-process library)"]
+    Turn[Turn lifecycle<br/>prepareTurn / completeTurn]
+    Prompt[Prompt builder<br/>+ context compaction]
+    Extract[Extractor<br/>one LLM call per turn]
+    Route{Write gate<br/>kind + durability}
+    Retrieve[Retrieval<br/>facts + episodes]
+  end
+
+  subgraph Stores["Storage"]
+    PG[(PostgreSQL<br/>transcript, facts, episodes)]
+    QD[(Qdrant<br/>fact + episode vectors)]
+    RD[(Redis<br/>working memory)]
+  end
+
+  Groq[[Groq LLM<br/>extraction, comparison, summaries]]
+  Embed[[FastEmbed<br/>local embeddings]]
+
+  API -- prepareTurn --> Turn
+  API -- completeTurn --> Turn
+  API -- task notes --> RD
+  Turn --> Prompt --> Retrieve
+  Turn --> Extract --> Route
+  Retrieve --> QD
+  Retrieve --> PG
+  Route -- fact --> PG
+  Route -- event --> PG
+  Route -. vectors .-> QD
+  Turn --> PG
+  Extract --> Groq
+  Retrieve --> Embed
+```
+
+The host app owns the conversation model. Recall Engine runs inside the host's process as a library, not as a separate service, and talks to three stores. PostgreSQL is always the source of truth; Qdrant only holds vectors for search, and every search hit is re-checked in PostgreSQL.
+
+### One conversation turn
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Host as Host app
+  participant RE as Recall Engine
+  participant PG as PostgreSQL
+  participant QD as Qdrant
+  participant LLM as Host chat model
+  participant X as Extractor (Groq)
+
+  Host->>RE: prepareTurn(user message)
+  RE->>PG: save user message (transcript)
+  RE->>QD: search relevant facts (top 5, ≥0.5) and episodes (top 3, ≥0.6)
+  RE->>PG: verify hits, load text
+  RE->>PG: load history (compact if over the token budget)
+  RE-->>Host: prompt = system + facts + dated episodes + history
+  Host->>LLM: prompt
+  LLM-->>Host: answer
+  Host->>RE: completeTurn(answer)
+  RE->>PG: save answer (transcript)
+  RE->>X: newest user message (+4 earlier as context, + today's date)
+  X-->>RE: candidates {kind, durability, occurredAt}
+  RE->>RE: write gate (routing)
+  RE->>PG: save facts / episodes
+  RE->>QD: index vectors
+  RE-->>Host: answer + what was saved / skipped
+```
+
+### The write gate
+
+Every candidate the extractor returns is routed by code, not by the LLM:
+
+```mermaid
+flowchart TD
+  C[Candidate from the newest user message] --> K{kind?}
+  K -- fact --> F{durability ≥ 0.7?}
+  F -- yes --> CMP[Compare with similar facts<br/>same / new / update]
+  CMP --> SEM[(Semantic memory)]
+  F -- no --> SKIP[Skipped: low_durability]
+  K -- event --> E{durability ≥ 0.3?}
+  E -- yes --> EPI[(Episodic memory<br/>with occurredAt)]
+  E -- no --> SKIP2[Skipped: low_durability]
+  K -- task / request --> SKIP3[Skipped: not_a_fact]
+```
+
+Durability is calibrated in the extractor prompt. Life milestones (a promotion, an injury, a big payout) score 0.7+, notable events (finishing a course) 0.3–0.6, and routine events (coffee, a daily run) under 0.1.
+
+| Message | Result |
+|---|---|
+| "I got promoted last Friday" | episode, `2026-11-20` |
+| "I had my biggest payout today, 10k" | episode, durability ~0.8 |
+| "I'm vegetarian" | semantic fact |
+| "I had coffee this morning" | skipped (trivial) |
+| "Give me a fun fact today" | skipped (request) |
+
+## Quick start
+
+Requires Node.js, Docker, and a Groq API key.
 
 ```sh
+cp .env.example .env          # set GROQ_API_KEY
 npm install
-npm run db:up
-npm run db:generate
-npm run db:migrate
+npm run db:up && npm run qdrant:up   # PostgreSQL + Qdrant (also run Redis on 127.0.0.1:6379)
+npm run db:generate && npm run db:migrate
+npm run build
 ```
 
-PostgreSQL data is kept in a Docker volume. Stop the container with `npm run db:down`; the volume remains for the next run.
-
-## Episodic memory
-
-`EpisodicMemory` creates conversations, appends messages in a transaction, and retrieves exact messages in sequence-number order. Message sequence numbers are allocated by incrementing a counter on the conversation row inside the same transaction as the insert. This keeps concurrent appends ordered and avoids gaps when an insert rolls back.
-
-`saveSummary` stores supplied summary text as a versioned checkpoint through a message sequence number. Earlier versions are retained. `ConversationSummaryService` selects only messages after the previous checkpoint and through the requested sequence, asks a provider-neutral `SummaryGenerator` to summarize them, then persists the result. The current `GroqSummaryGenerator` uses Groq's chat-completions API. Set `GROQ_API_KEY` in your local `.env`; `GROQ_MODEL` can override the default model. Tests use provider stubs or verify the missing-key path; they do not make live Groq requests. The context compactor requests summaries when its token threshold is reached; the public conversation turn API invokes it during turn preparation.
-
-`ConversationContextCompactor.build` assembles a model-ready prompt from the system prompt, latest saved summary, and recent exact messages. It counts the full prompt with the GPT-OSS-120B tokenizer. At 80% of the configured input budget, it summarizes older messages in bounded batches and retains the newest message in the prompt. The source transcript is not edited. The default target is 65% of the input budget, with up to two summary calls per build; configure the input budget for the agent and reserve response tokens separately. The public API defaults this budget to 12,000 tokens, configurable with `RECALL_CONTEXT_INPUT_TOKEN_BUDGET`.
-
-The caller can create it with `new ConversationContextCompactor(episodicMemory, summaryService, { inputTokenBudget: 12_000 })` and pass the returned `messages` to the model. An unusually large newest message fails with `ContextBudgetExceededError` instead of being silently truncated. The build also limits a single un-compacted transcript load to 1,000 messages.
-
-Run the PostgreSQL integration test with:
-
-```sh
-npm run test:episodic
-```
-
-## Semantic memory
-
-`SemanticMemoryStore` saves one durable fact per record in PostgreSQL. Each record has a stable semantic-memory ID, tenant/user ownership, a category, and references to the source conversation and exact message. Fetching by ID returns the stored fact together with its source message, scoped to the owning tenant and user. Superseding a fact creates a new record and retains the prior one with a `superseded` status.
-
-`GroqSemanticFactExtractor` proposes fact candidates from caller-supplied, ID-tagged user/assistant messages. When given a `SemanticMemoryVectorStore`, `AutomaticSemanticMemoryService` retrieves up to five similar active facts for the same tenant/user and asks Groq to classify each candidate as `same`, `new`, `update`, or `uncertain`. Same and uncertain candidates are skipped. New facts are saved; updates supersede the matched PostgreSQL fact and refresh Qdrant status. The service also skips unsupported-source, vague confirmation-only, and duplicate-in-batch candidates. The caller must supply messages already persisted in the same conversation so source-message IDs can be verified. The public turn API attempts this flow after saving each assistant response and reports extraction failures separately.
-
-PostgreSQL is the canonical record for fact content and provenance. `SemanticMemoryVectorStore` creates local embeddings with FastEmbed, stores them in Qdrant under the semantic-memory ID, and scopes similarity search by tenant, user, and active status. Search returns IDs and scores; callers load and verify fact content in PostgreSQL. Pass a `SemanticMemoryVectorStore` as the third dependency to `AutomaticSemanticMemoryService`; it uses Groq for comparisons by default. Start the local Qdrant container with `npm run qdrant:up`; configure `QDRANT_URL` and `QDRANT_COLLECTION` in `.env`. The first embedding request downloads the FastEmbed model into the ignored `local_cache/` directory and runs it locally. Apply PostgreSQL migrations with `npm run db:migrate` and run the PostgreSQL integration tests with `npm run test:episodic`.
-
-`ConversationPromptBuilder` connects retrieval to prompt assembly. After the latest user message has been saved to the conversation, the caller passes its text, the conversation scope/ID, and the system prompt. The builder retrieves relevant memories, adds them as labeled JSON reference data, and calls `ConversationContextCompactor` so the full prompt—including the memory block—is counted against the token budget. Its `messages` can be sent to the model provider. The public turn API invokes this retrieval as part of turn preparation.
-
-```ts
-const prompt = await conversationPromptBuilder.build(
-  conversationScope,
-  conversationId,
-  systemPrompt,
-  latestUserMessage.content,
-);
-// Send prompt.messages to the model provider.
-```
-
-`ConversationTurnMemoryService` provides the memory lifecycle around a host application's model call. `prepareTurn` saves the user message and returns the assembled prompt. The consuming app sends `prepared.prompt.messages` to its own model, then passes the response to `completeTurn`. Recall Engine saves the assistant message and attempts semantic fact extraction using up to eight persisted messages ending at the current user message. The newly generated assistant response is saved in the transcript but is not used as evidence for facts from that turn. An assistant reply is accepted only if the conversation has not advanced since that user message was prepared, preventing overlapping turns from being stored out of order. If extraction fails, `completeTurn` still returns the saved assistant response with a failed memory outcome. Groq is used internally for summaries, extraction, and fact comparison; the consuming application owns the conversational model call.
-
-```ts
-const prepared = await conversationMemory.prepareTurn(
-  conversationScope,
-  conversationId,
-  systemPrompt,
-  userMessage,
-);
-const assistantText = await yourModel.complete(prepared.prompt.messages);
-const completed = await conversationMemory.completeTurn(
-  conversationScope,
-  prepared,
-  assistantText,
-);
-return completed.assistantMessage.content;
-```
-
-## Public library API
-
-Applications can use the supported API from the package entry point. `connectRecallEngine()` reads the environment settings, connects to PostgreSQL, Redis, and Qdrant, and returns grouped conversation, working-memory, and semantic-memory operations. Keep one instance for the lifetime of the host application and call `close()` during graceful shutdown; do not connect and close on every turn.
+### Use it from your app
 
 ```ts
 import { connectRecallEngine } from "recall-engine";
 
-const recall = await connectRecallEngine();
+const recall = await connectRecallEngine();          // once, at startup
+const scope = { tenantId, userId, sessionId };
 
 const conversation = await recall.conversations.create(scope);
 const prepared = await recall.conversations.prepareTurn({
   scope,
   conversationId: conversation.id,
-  systemPrompt,
-  userMessage,
+  systemPrompt: "You are a helpful assistant.",
+  userMessage: "When did I get promoted?",
 });
 
-// Call the host application's model with prepared.prompt.messages.
-const assistantContent = await hostModel.complete(prepared.prompt.messages);
+const answer = await yourModel.complete(prepared.prompt.messages); // your own LLM
+
 const completed = await recall.conversations.completeTurn({
   scope,
   preparedTurn: prepared,
-  assistantContent,
+  assistantContent: answer,
 });
+// completed.semanticMemory.result → saved facts, savedEpisodes, skipped (with reasons)
 
-// On application shutdown:
-await recall.close();
+await recall.close();                                // on shutdown
 ```
 
-Startup checks that PostgreSQL, Redis, and Qdrant are reachable. The configured Qdrant collection is created on the first semantic index/search operation if it does not already exist. FastEmbed initializes only when semantic search or indexing needs an embedding. Groq is also initialized when a memory summary or extraction is first requested; extraction failures are returned separately from the saved assistant response.
+Other operations: `recall.workingMemory.*` (task notes), `recall.semanticMemory.*` (retrieve, getById, saveFact, extractAndSave), and `recall.episodicMemory.*` (retrieve, list).
 
-Turn preparation saves the user message before building its prompt. If retrieval or compaction then fails, `ConversationPromptPreparationError` includes the saved message ID. The application can retry preparation with the same scope, conversation, and text plus `resumeUserMessageId`; Recall Engine verifies that message and checks for later conversation messages both before and after rebuilding the prompt. If another turn arrives after preparation returns, completion rejects the stale turn. This avoids silently adding the same user message twice or completing turns out of order.
-
-`DATABASE_URL` is required. `REDIS_URL`, `QDRANT_URL`, `QDRANT_COLLECTION`, `GROQ_API_KEY`, and `GROQ_MODEL` use their documented defaults/environment settings. Context and working-memory limits can be set with `RECALL_CONTEXT_INPUT_TOKEN_BUDGET`, `RECALL_WORKING_MEMORY_TOKEN_BUDGET`, and `RECALL_WORKING_MEMORY_SESSION_TTL_MS`; the defaults are 12,000 input tokens, 4,000 working-memory tokens, and a 30-minute session TTL. `connectRecallEngine` also accepts connection URLs and these limits as options.
-
-Each turn's prompt gets the durable facts returned by a semantic search on the current user message. Two settings bound that recall: at most `RECALL_SEMANTIC_MEMORY_TOP_K` facts (default 5, option `semanticMemoryTopK`), and only facts whose cosine similarity is at least `RECALL_SEMANTIC_MEMORY_SCORE_THRESHOLD` (default 0.5, option `semanticMemoryScoreThreshold`, range 0–1). Weaker matches are left out of `prepareTurn`'s `prompt.semanticMemories` and the system prompt. Raise the threshold if unrelated facts show up; lower it if relevant ones are missed. Explicit `semanticMemory.retrieve` calls take their own `limit` and `scoreThreshold`.
-
-After each turn, the extractor reads only the newest user message as its target (up to 4 earlier messages are reference-only context) and labels every candidate with a `kind` (`fact`, `event`, `task`, `request`) and a `durability` score (0–1). Only `fact` candidates with durability at or above `RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD` (default 0.7, option `semanticMemoryDurabilityThreshold`) are saved; the rest appear in the turn's `skipped` list as `not_a_fact` or `low_durability`.
-
-### Episodic memory
-
-Episodic memory holds dated records of past events and conversations (see ADR 0002: the stored messages are the transcript, not episodic memory). There are two kinds:
-
-- **Event episodes.** When the extractor labels a candidate `kind = event` with durability at or above `RECALL_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD` (default 0.3, option `episodicMemoryEventDurabilityThreshold`), it is saved as an episode with its `occurredAt` date. The turn result lists them in `savedEpisodes`.
-- **Conversation episodes.** `conversations.end(scope, conversationId)` summarizes a conversation into one dated episode and marks it ended; it is idempotent. `conversations.create` first finishes the user's earlier unended conversations on a best-effort basis and reports the result in `finishedConversations`.
-
-Each turn's prompt also gets the most relevant episodes, with their dates: at most `RECALL_EPISODIC_MEMORY_TOP_K` (default 3, option `episodicMemoryTopK`) with a score of at least `RECALL_EPISODIC_MEMORY_SCORE_THRESHOLD` (default 0.5, option `episodicMemoryScoreThreshold`). Episodes are stored in PostgreSQL and indexed in the Qdrant collection `QDRANT_EPISODE_COLLECTION` (default `episodes`). Use `episodicMemory.retrieve` and `episodicMemory.list` to read them directly.
- The semantic-memory group supports direct fact storage with a source message, lookup by ID, scoped retrieval, and explicit extraction for workflows outside the automatic turn flow.
-
-## Redis working memory
-
-Start Redis on `127.0.0.1:6379`, then run the demo:
+### Run the Memory Lab demo
 
 ```sh
-npm run demo
+cd examples/next-demo
+npm install
+set -a && . ../../.env && set +a && npm run dev     # http://127.0.0.1:3000
 ```
 
-Set `REDIS_URL` to use another Redis address. Run its integration tests with `npm test`.
+Chat on the left. The inspector on the right shows the exact prompt, recalled memories, and what each turn saved or skipped. `/architecture` has an illustrated explainer.
 
-## Memory Lab demo
+## Configuration
 
-`examples/next-demo` is a Next.js chat app for watching memory work turn by turn. Its `/architecture` page explains the memory design with diagrams, for non-engineers.
+Set these as environment variables, or pass the matching option to `connectRecallEngine`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | *required* | PostgreSQL |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Working memory |
+| `QDRANT_URL` | `http://127.0.0.1:6333` | Vector search |
+| `QDRANT_COLLECTION` / `QDRANT_EPISODE_COLLECTION` | `semantic_memories` / `episodes` | Vector collections |
+| `GROQ_API_KEY`, `GROQ_MODEL` | model: `openai/gpt-oss-120b` | Extraction, comparison, summaries |
+| `RECALL_CONTEXT_INPUT_TOKEN_BUDGET` | 12000 | Prompt budget before compaction |
+| `RECALL_WORKING_MEMORY_TOKEN_BUDGET` / `_SESSION_TTL_MS` | 4000 / 1800000 | Working memory limits |
+| `RECALL_SEMANTIC_MEMORY_TOP_K` / `_SCORE_THRESHOLD` | 5 / 0.5 | Fact recall |
+| `RECALL_SEMANTIC_MEMORY_DURABILITY_THRESHOLD` | 0.7 | Minimum durability to save a fact |
+| `RECALL_EPISODIC_MEMORY_TOP_K` / `_SCORE_THRESHOLD` | 3 / 0.6 | Episode recall |
+| `RECALL_EPISODIC_MEMORY_EVENT_DURABILITY_THRESHOLD` | 0.3 | Minimum durability to save an event |
+
+## Project layout
+
+```
+src/
+  recall-engine.ts                 public API (connectRecallEngine) and wiring
+  conversation-turn-memory.ts      prepareTurn / completeTurn lifecycle
+  conversation-prompt-builder.ts   facts + episodes + history → prompt
+  context-compaction.ts            token budgeting and compaction summaries
+  episodic-memory.ts               transcript store (name predates ADR 0002)
+  semantic-fact-extractor.ts       the extractor prompt (kind, durability, occurredAt)
+  semantic-memory-extraction-service.ts  write gate and routing
+  semantic-memory*.ts              fact store, vectors, retrieval, comparator
+  episode-*.ts                     episode store, vectors, retrieval
+  working-memory.ts                Redis task notes
+examples/next-demo/                Memory Lab (Next.js)
+docs/flow.md                       step-by-step turn flow
+```
+
+## Testing
+
+```sh
+npm test                 # working memory (Redis)
+npm run test:episodic    # everything else (PostgreSQL; LLM and vector calls are faked)
+cd examples/next-demo && npm run test:integration
+```
+
+Run the PostgreSQL suite with the demo server stopped: one test counts open database connections.
+
+## Further reading
+
+- [`docs/flow.md`](docs/flow.md): the turn flow in detail
+- [`IMPROVEMENTS.md`](IMPROVEMENTS.md): deferred improvements

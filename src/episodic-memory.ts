@@ -314,60 +314,6 @@ export class EpisodicMemory {
     });
   }
 
-  /** Conversation metadata within the scope, or null. */
-  getConversation(scope: ConversationScope, conversationId: string) {
-    this.validateScope(scope);
-    if (!conversationId.trim()) return Promise.resolve(null);
-    return this.prisma.conversation.findFirst({
-      where: {
-        tenantId: scope.tenantId,
-        id: conversationId,
-        userId: scope.userId,
-        sessionId: scope.sessionId,
-      },
-      select: { id: true, startedAt: true, endedAt: true, nextSequenceNo: true },
-    });
-  }
-
-  /** Marks a conversation ended; returns false if it was already ended or is out of scope. */
-  async markEnded(scope: ConversationScope, conversationId: string, endedAt = new Date()): Promise<boolean> {
-    this.validateScope(scope);
-    const result = await this.prisma.conversation.updateMany({
-      where: {
-        tenantId: scope.tenantId,
-        id: conversationId,
-        userId: scope.userId,
-        sessionId: scope.sessionId,
-        endedAt: null,
-      },
-      data: { endedAt },
-    });
-    return result.count === 1;
-  }
-
-  /** The user's unended conversations across all sessions, oldest first, with their own session scope. */
-  async listUnendedConversations(
-    scope: Pick<ConversationScope, "tenantId" | "userId">,
-    options: { excludeConversationId?: string; limit?: number } = {},
-  ): Promise<Array<{ id: string; scope: ConversationScope }>> {
-    if (!scope.tenantId.trim() || !scope.userId.trim()) throw new Error("tenantId and userId must not be empty");
-    const conversations = await this.prisma.conversation.findMany({
-      where: {
-        tenantId: scope.tenantId,
-        userId: scope.userId,
-        endedAt: null,
-        ...(options.excludeConversationId ? { id: { not: options.excludeConversationId } } : {}),
-      },
-      orderBy: { startedAt: "asc" },
-      take: options.limit ?? 20,
-      select: { id: true, sessionId: true },
-    });
-    return conversations.map(({ id, sessionId }) => ({
-      id,
-      scope: { tenantId: scope.tenantId, userId: scope.userId, sessionId },
-    }));
-  }
-
   private validateScope(scope: ConversationScope): void {
     for (const [name, value] of Object.entries(scope)) {
       if (!value.trim()) throw new Error(`${name} must not be empty`);

@@ -137,18 +137,6 @@ describe("Recall Engine public API", () => {
       assert.equal(tracedFact?.sourceMessageId, messages[0]?.id);
       assert.deepEqual(otherUserMatches, []);
 
-      // Without a Groq key, finishing the earlier conversation fails; creation must still succeed.
-      const groqKey = process.env.GROQ_API_KEY;
-      process.env.GROQ_API_KEY = "";
-      let emptyConversation;
-      try {
-        emptyConversation = await engine.conversations.create(scope, "Empty");
-      } finally {
-        if (groqKey === undefined) delete process.env.GROQ_API_KEY;
-        else process.env.GROQ_API_KEY = groqKey;
-      }
-      assert.deepEqual(emptyConversation.finishedConversations.failed.map(({ conversationId }) => conversationId), [conversation.id]);
-      assert.deepEqual(await engine.conversations.end(scope, emptyConversation.id), { status: "ended", episode: null });
       assert.deepEqual(await engine.episodicMemory.list({ tenantId: scope.tenantId, userId: scope.userId }), []);
 
       const expiringScope = { ...scope, sessionId: randomUUID() };
